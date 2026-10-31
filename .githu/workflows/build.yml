@@ -1,0 +1,359 @@
+name: Build Huawei KOB2 Kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      toolchain:
+        description: "Derleyici (stok kernel Linaro GCC 6.3.1 ile derlenmis)"
+        type: choice
+        default: "linaro-6.3.1"
+        options:
+          - "linaro-6.3.1"
+          - "kernel-org-gcc-6.4.0"
+          - "android-gcc-4.9"
+      slub_debug:
+        description: "SLUB/liste hata ayiklama (bellek bozulmasini erken yakalar)"
+        type: choice
+        default: "true"
+        options:
+          - "true"
+          - "false"
+      debug_info:
+        description: "vmlinux icine DWARF koy (cokme adresini kaynak satirina cevirmek icin)"
+        type: choice
+        default: "true"
+        options:
+          - "true"
+          - "false"
+      kasan:
+        description: "KASAN (agir ve riskli; yalnizca bozulma kaynagi bulunamazsa)"
+        type: choice
+        default: "false"
+        options:
+          - "false"
+          - "true"
+  push:
+    paths:
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
+
+env:
+  TOOLCHAIN: ${{ inputs.toolchain || 'linaro-6.3.1' }}
+  SLUB_DEBUG: ${{ inputs.slub_debug || 'true' }}
+  DEBUG_INFO: ${{ inputs.debug_info || 'true' }}
+  KASAN: ${{ inputs.kasan || 'false' }}
+  WLAN: drivers/misc/mediatek/connectivity/wlan_drv_gen4m
+
+jobs:
+  build:
+    name: Build Android 11 Kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Apply local patches (ci/patches/*.patch)
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for p in ci/patches/*.patch; do
+            echo "== $p"
+            git apply --check "$p"
+            git apply "$p"
+          done
+          git diff --stat
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential flex xz-utils \
+            libssl-dev libelf-dev libexpat1-dev \
+            libffi-dev zlib1g-dev libbz2-dev \
+            libreadline-dev libsqlite3-dev \
+            device-tree-compiler curl ca-certificates \
+            perl rsync
+
+      - name: Install toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          install_gcc49() {
+            for i in 1 2 3; do
+              rm -rf "$HOME/gcc49"
+              if git clone --depth=1 -b lineage-19.1 \
+                https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 \
+                "$HOME/gcc49"; then
+                break
+              fi
+              echo "Clone basarisiz, tekrar deneniyor ($i/3)..."
+              sleep 5
+            done
+            CROSS="$HOME/gcc49/bin/aarch64-linux-android-"
+            echo "USED_TOOLCHAIN=android-gcc-4.9" >> "$GITHUB_ENV"
+          }
+
+          # Indirilen dosyanin gercekten xz arsivi oldugunu dogrula (site HTML donebilir)
+          try_tarball() {  # $1=url  $2=cikan klasor  $3=gcc on eki (klasor icinde)  $4=etiket
+            rm -f "$RUNNER_TEMP/tc.tar.xz"
+            curl -fL --retry 3 "$1" -o "$RUNNER_TEMP/tc.tar.xz" || { echo "indirme basarisiz: $1"; return 1; }
+            if ! xz -t "$RUNNER_TEMP/tc.tar.xz" 2>/dev/null; then
+              echo "indirilen dosya xz degil ($(stat -c %s "$RUNNER_TEMP/tc.tar.xz") bayt): $(head -c 160 "$RUNNER_TEMP/tc.tar.xz" | tr '\n' ' ')"
+              return 1
+            fi
+            tar -xJf "$RUNNER_TEMP/tc.tar.xz" -C "$HOME" || return 1
+            CROSS="$HOME/$2/$3"
+            "${CROSS}gcc" --version > /dev/null 2>&1 || { echo "gcc calismiyor: ${CROSS}gcc"; return 1; }
+            echo "USED_TOOLCHAIN=$4" >> "$GITHUB_ENV"
+          }
+
+          case "$TOOLCHAIN" in
+            linaro-6.3.1)
+              try_tarball \
+                "https://releases.linaro.org/components/toolchain/binaries/6.3-2017.02/aarch64-linux-gnu/gcc-linaro-6.3.1-2017.02-x86_64_aarch64-linux-gnu.tar.xz" \
+                gcc-linaro-6.3.1-2017.02-x86_64_aarch64-linux-gnu bin/aarch64-linux-gnu- linaro-6.3.1 \
+                || { echo "::warning::Linaro 6.3.1 kullanilamadi, Android GCC 4.9'a donuluyor"; install_gcc49; }
+              ;;
+            kernel-org-gcc-6.4.0)
+              try_tarball \
+                "https://mirrors.edge.kernel.org/pub/tools/crosstool/files/bin/x86_64/6.4.0/x86_64-gcc-6.4.0-nolibc-aarch64-linux.tar.xz" \
+                gcc-6.4.0-nolibc aarch64-linux/bin/aarch64-linux- kernel-org-gcc-6.4.0 \
+                || { echo "::warning::kernel.org GCC 6.4.0 kullanilamadi, Android GCC 4.9'a donuluyor"; install_gcc49; }
+              ;;
+            *)
+              install_gcc49
+              ;;
+          esac
+
+          echo "CROSS=$CROSS" >> "$GITHUB_ENV"
+          "${CROSS}gcc" --version | head -n 1
+
+      - name: Build Python 2.7
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+
+          curl -fL --retry 3 \
+            https://www.python.org/ftp/python/2.7.18/Python-2.7.18.tgz \
+            -o Python-2.7.18.tgz
+
+          tar -xzf Python-2.7.18.tgz
+          cd Python-2.7.18
+
+          CFLAGS="-O2 -fno-strict-aliasing -Wno-implicit-function-declaration" \
+            ./configure \
+              --prefix="$RUNNER_TEMP/python2" \
+              --disable-shared \
+              --without-ensurepip
+
+          make -j2
+          make install
+
+          mkdir -p "$RUNNER_TEMP/python2-bin"
+          ln -sf "$RUNNER_TEMP/python2/bin/python2.7" \
+            "$RUNNER_TEMP/python2-bin/python2"
+
+          echo "$RUNNER_TEMP/python2-bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/python2-bin/python2" --version
+
+      - name: Configure kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p logs
+
+          make O=out ARCH=arm64 \
+            CROSS_COMPILE="$CROSS" \
+            kobe2_defconfig
+
+          test -s out/.config
+
+          # KOB2-W09 yalnizca Wi-Fi'li model, modemi yok. Stok cekirdekte
+          # kapali olan modem secenekleri burada da kapatiliyor.
+          ./scripts/config --file out/.config \
+            -d MTK_CONN_MD \
+            -d MTK_CONN_LTE_IDC_SUPPORT \
+            -d MTK_ECCCI_DRIVER \
+            -d MTK_NET_CCMNI
+
+          if [ "$SLUB_DEBUG" = "true" ]; then
+            ./scripts/config --file out/.config \
+              -e DEBUG_KERNEL -e SLUB_DEBUG -e SLUB_DEBUG_ON -e DEBUG_LIST
+          fi
+          if [ "$DEBUG_INFO" = "true" ]; then
+            ./scripts/config --file out/.config -e DEBUG_KERNEL -e DEBUG_INFO
+          fi
+          if [ "$KASAN" = "true" ]; then
+            ./scripts/config --file out/.config \
+              -e DEBUG_KERNEL -e SLUB_DEBUG -e KASAN -e KASAN_OUTLINE
+          fi
+
+          make O=out ARCH=arm64 \
+            CROSS_COMPILE="$CROSS" \
+            olddefconfig
+
+          {
+            echo "=== Derleyici ==="
+            "${CROSS}gcc" --version | head -n 1
+            echo "kullanilan: ${USED_TOOLCHAIN:-?}  (istenen: $TOOLCHAIN)"
+            echo "kaynak commit: $(git rev-parse HEAD)"
+            echo
+            echo "=== Hata ayiklama secenekleri (istenen: slub=$SLUB_DEBUG info=$DEBUG_INFO kasan=$KASAN) ==="
+            grep -E '^(# )?CONFIG_(DEBUG_KERNEL|SLUB_DEBUG|SLUB_DEBUG_ON|DEBUG_LIST|DEBUG_INFO|KASAN)[ =]' out/.config || true
+            echo
+            echo "=== Modem secenekleri (hepsi kapali olmali) ==="
+            grep -E 'CONFIG_(MTK_CONN_MD|MTK_CONN_LTE_IDC_SUPPORT|MTK_ECCCI[A-Z0-9_]*|MTK_NET_CCMNI|MTK_MD[0-9]_SUPPORT)[ =]' out/.config || true
+            echo
+            echo "=== Wi-Fi / connectivity ==="
+            grep -E 'CONFIG_(MTK_COMBO|WLAN|MTK_CONN|MTK_WIFI)[A-Z0-9_]*=' out/.config || true
+            echo
+            echo "=== Sniffer/monitor kaynak destegi ==="
+            grep -n 'CFG_SUPPORT_SNIFFER' "$WLAN/include/config.h" || true
+          } | tee logs/configure.txt
+
+          # Stok kernelin config'i ile fark (ci/stock.config varsa)
+          if [ -f ci/stock.config ]; then
+            norm() { grep -E '^(# )?CONFIG_[A-Za-z0-9_]+( is not set|=)' "$1" | sed -E 's/^# (CONFIG_[A-Za-z0-9_]+) is not set$/\1=n/' | sort; }
+            diff <(norm ci/stock.config) <(norm out/.config) > logs/config_diff_vs_stock.txt || true
+            echo "stok config ile fark satiri: $(grep -cE '^[<>]' logs/config_diff_vs_stock.txt)  (< stok, > bizim)"
+          fi
+
+      - name: Build kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$RUNNER_TEMP/python2-bin:$PATH"
+
+          python2 --version
+          "${CROSS}gcc" --version | head -n 1
+
+          # -k: ilk hatada durma, tum hatalari tek calistirmada topla
+          make -k -j"$(nproc)" O=out ARCH=arm64 \
+            CROSS_COMPILE="$CROSS" \
+            Image.gz-dtb 2>&1 | tee logs/build.log
+
+          test -s out/arch/arm64/boot/Image.gz-dtb
+          echo "Kernel image created successfully."
+          ls -lh out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Show first errors
+        if: failure()
+        shell: bash
+        run: |
+          echo "=== Hata satirlari (ilk 60) ==="
+          grep -nE 'error:|\*\*\* \[|Error [0-9]+' logs/build.log | head -60 || true
+
+      - name: Collect wlan logs, symbols, disassembly, sources
+        if: success()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p logs/asm logs/src
+
+          # wlan sürücüsünün derleme uyarilari (bellek/ilklendirme hatalari burada gorunebilir)
+          grep -nE 'wlan_drv_gen4m.*(warning|error)' logs/build.log > logs/wlan_warnings.txt || true
+          echo "wlan uyari sayisi: $(wc -l < logs/wlan_warnings.txt)"
+
+          # monitor/radiotap ile ilgili kaynak satirlari
+          grep -rnE 'radiotap|SNIFFER|MONITOR|Monitor' "$WLAN" \
+            --include='*.c' --include='*.h' > logs/monitor_grep.txt || true
+
+          # analiz icin ilgili kaynak dosyalari
+          for f in nic/nic_rx.c os/linux/gl_kal.c os/linux/gl_wext_priv.c common/wlan_oid.c include/config.h; do
+            cp "$WLAN/$f" "logs/src/$(basename "$f")" 2>/dev/null || echo "yok: $f"
+          done
+
+          # sembol boyutlari ve ilgili fonksiyonlarin cozumlenmis assembly'si
+          NM="${CROSS}nm"; OBJDUMP="${CROSS}objdump"
+          if [ -f out/vmlinux ]; then
+            "$NM" -S out/vmlinux > logs/vmlinux_symbols.txt
+            for fn in kalRxIndicateOnePkt kalRxIndicatePkts rx_thread \
+                      nicRxProcessMonitorPacket nicRxFillRadiotapMCS nicRxFillRadiotapVHT \
+                      nicRxProcessDataPacket priv_driver_set_monitor wlanoidSetMonitor; do
+              line=$(awk -v s="$fn" '$4==s {print $1, $2; exit}' logs/vmlinux_symbols.txt)
+              [ -z "$line" ] && { echo "sembol yok: $fn"; continue; }
+              addr=${line% *}; size=${line#* }
+              start=$((16#$addr)); stop=$((start + 16#$size))
+              printf -v s_hex '0x%x' "$start"; printf -v e_hex '0x%x' "$stop"
+              "$OBJDUMP" -dl --start-address="$s_hex" --stop-address="$e_hex" out/vmlinux > "logs/asm/$fn.S" 2>&1 || true
+              echo "$fn  adres=0x$addr  boyut=0x$size"
+            done | tee logs/function_sizes.txt
+          fi
+
+      - name: Repack boot.img (ci/boot_stock.img varsa)
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f ci/boot_stock.img ]; then
+            python3 ci/repack_boot.py ci/boot_stock.img \
+              out/arch/arm64/boot/Image.gz-dtb out/boot_test.img
+            sha256sum out/boot_test.img | tee logs/boot_test.sha256
+          else
+            echo "ci/boot_stock.img yok, repack atlandi."
+            echo "Artifact'taki Image.gz-dtb'yi bilgisayarda su komutla paketle:"
+            echo "  python3 ci/repack_boot.py boot_cihaz.img Image.gz-dtb boot_test.img"
+          fi
+
+      - name: Build summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## KOB2 kernel derlemesi"
+            echo
+            echo "- Derleyici: \`${USED_TOOLCHAIN:-?}\` (istenen: \`$TOOLCHAIN\`)"
+            echo "- SLUB debug: \`$SLUB_DEBUG\`, DEBUG_INFO: \`$DEBUG_INFO\`, KASAN: \`$KASAN\`"
+            if [ -s out/arch/arm64/boot/Image.gz-dtb ]; then
+              echo "- Image.gz-dtb: $(stat -c %s out/arch/arm64/boot/Image.gz-dtb) bayt"
+            fi
+            if [ -f logs/wlan_warnings.txt ]; then echo "- wlan derleme uyarisi: $(wc -l < logs/wlan_warnings.txt)"; fi
+            if [ -f logs/config_diff_vs_stock.txt ]; then echo "- stok config farki: $(grep -cE '^[<>]' logs/config_diff_vs_stock.txt) satir"; fi
+            if [ -f out/boot_test.img ]; then echo "- boot_test.img uretildi"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Upload kernel artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KOB2-Kernel-Build
+          path: |
+            out/arch/arm64/boot/Image
+            out/arch/arm64/boot/Image.gz
+            out/arch/arm64/boot/Image.gz-dtb
+            out/arch/arm64/boot/mtk.dtb
+            out/boot_test.img
+            out/.config
+            out/System.map
+          if-no-files-found: warn
+          compression-level: 6
+          retention-days: 14
+
+      - name: Upload vmlinux (cokme analizi icin)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KOB2-vmlinux
+          path: out/vmlinux
+          if-no-files-found: ignore
+          compression-level: 9
+          retention-days: 14
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KOB2-Logs
+          path: logs/
+          if-no-files-found: ignore
+          retention-days: 14
