@@ -1,0 +1,17 @@
+--- a/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/nic/nic_rx.c
++++ b/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/nic/nic_rx.c
+@@ -1626,6 +1626,14 @@
+ 	prRxCtrl->ucNumIndPacket++;
+ #endif
+ 
++	/*
++	 * The skb now belongs to the OS RX queue. Detach it from the RFB,
++	 * exactly like nicRxProcessDataPacket() does; otherwise
++	 * nicRxSetupRFB() reuses the same skb for the next frame and the
++	 * RFB keeps a dangling pointer (use-after-free / double free).
++	 */
++	prSwRfb->pvPacket = NULL;
++
+ 	/* Return RFB */
+ 	if (nicRxSetupRFB(prAdapter, prSwRfb)) {
+ 		DBGLOG(RX, WARN,
