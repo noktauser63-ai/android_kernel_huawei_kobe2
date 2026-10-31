@@ -1,0 +1,119 @@
+name: Build drvcmd2 (MTK inline priv cmd tool)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build static drvcmd2
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Install cross compilers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+
+      - name: Write source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > drvcmd2.c << 'CEOF'
+          /*
+           * drvcmd2: MTK gen4m "driver command" ioctl'u (SIOCDEVPRIVATE+1).
+           *
+           * Bu surucu 520 baytlik, tamponu icine gomulu bir yapi bekler:
+           *   struct { char buf[512]; int used_len; int total_len; }
+           * (cekirdek 520 bayt kopyalar, total_len'i ofset 516'dan okur ve
+           *  1..512 disindaysa EINVAL doner; komut metni ofset 0'dan alinir.)
+           *
+           * Kullanim: drvcmd2 wlan0 "MONITOR 1 149 0 0"
+           */
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <errno.h>
+          #include <unistd.h>
+          #include <sys/socket.h>
+          #include <sys/ioctl.h>
+          #include <net/if.h>
+          #include <linux/sockios.h>
+
+          #define PRIV_CMD_SIZE 512
+
+          struct mtk_priv_cmd {
+              char buf[PRIV_CMD_SIZE];
+              int used_len;
+              int total_len;
+          };
+
+          int main(int argc, char **argv)
+          {
+              struct mtk_priv_cmd pc;
+              struct ifreq ifr;
+              char orig[PRIV_CMD_SIZE];
+              int s, r, e;
+
+              if (argc < 3) {
+                  fprintf(stderr, "kullanim: %s <arayuz> \"KOMUT ...\"\n", argv[0]);
+                  return 2;
+              }
+              if (strlen(argv[2]) >= PRIV_CMD_SIZE) {
+                  fprintf(stderr, "komut cok uzun (en fazla %d)\n", PRIV_CMD_SIZE - 1);
+                  return 2;
+              }
+
+              memset(&pc, 0, sizeof(pc));
+              strncpy(pc.buf, argv[2], PRIV_CMD_SIZE - 1);
+              pc.used_len = PRIV_CMD_SIZE;
+              pc.total_len = PRIV_CMD_SIZE;
+              memcpy(orig, pc.buf, sizeof(orig));
+
+              memset(&ifr, 0, sizeof(ifr));
+              strncpy(ifr.ifr_name, argv[1], IFNAMSIZ - 1);
+              ifr.ifr_data = (char *)&pc;
+
+              s = socket(AF_INET, SOCK_DGRAM, 0);
+              if (s < 0) {
+                  perror("socket");
+                  return 1;
+              }
+
+              errno = 0;
+              r = ioctl(s, SIOCDEVPRIVATE + 1, &ifr);
+              e = errno;
+              printf("ioctl donus=%d errno=%d (%s)\n", r, e, e ? strerror(e) : "ok");
+              printf("used_len=%d total_len=%d\n", pc.used_len, pc.total_len);
+
+              pc.buf[PRIV_CMD_SIZE - 1] = '\0';
+              if (pc.buf[0] && memcmp(orig, pc.buf, sizeof(orig)) != 0)
+                  printf("yanit: %s\n", pc.buf);
+
+              close(s);
+              return (r >= 0) ? 0 : 1;
+          }
+          CEOF
+
+      - name: Compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          aarch64-linux-gnu-gcc -static -O2 -Wall -o dist/drvcmd2-arm64 drvcmd2.c
+          arm-linux-gnueabihf-gcc -static -O2 -Wall -o dist/drvcmd2-arm32 drvcmd2.c
+          file dist/* || true
+          ls -l dist
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: drvcmd2-binaries
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7

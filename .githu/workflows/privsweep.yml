@@ -1,0 +1,138 @@
+name: Build privsweep (MTK priv cmd size sweep)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build static privsweep
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Install cross compilers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+
+      - name: Write source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > privsweep.c << 'CEOF'
+          /*
+           * privsweep: MTK/Android "driver command" ioctl'unu (SIOCDEVPRIVATE+1)
+           * farkli total_len/used_len degerleriyle dener, hangi degerin
+           * EINVAL disinda bir sonuc verdigini bulmaya calisir.
+           * Kullanim: privsweep wlan0 "MONITOR 1 149 0 0"
+           */
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <errno.h>
+          #include <unistd.h>
+          #include <sys/socket.h>
+          #include <sys/ioctl.h>
+          #include <net/if.h>
+          #include <linux/sockios.h>
+
+          struct android_wifi_priv_cmd {
+              char *buf;
+              int used_len;
+              int total_len;
+          };
+
+          static int try_once(int s, const char *ifname, const char *cmd,
+                               int bufsize, int used_len_mode)
+          {
+              /* used_len_mode: 0 -> used_len = bufsize (AOSP referans)
+                                 1 -> used_len = strlen(cmd)+1 (gercek veri boyu) */
+              char *buf = calloc(1, bufsize);
+              struct android_wifi_priv_cmd pc;
+              struct ifreq ifr;
+              int r, e, cmdlen = (int)strlen(cmd) + 1;
+
+              if (!buf) { perror("calloc"); return -1; }
+              if (cmdlen > bufsize) cmdlen = bufsize;
+              memcpy(buf, cmd, cmdlen);
+
+              pc.buf = buf;
+              pc.total_len = bufsize;
+              pc.used_len = (used_len_mode == 0) ? bufsize : cmdlen;
+
+              memset(&ifr, 0, sizeof(ifr));
+              strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+              ifr.ifr_data = (char *)&pc;
+
+              errno = 0;
+              r = ioctl(s, SIOCDEVPRIVATE + 1, &ifr);
+              e = errno;
+              printf("bufsize=%-5d used_len_mode=%d (used_len=%-5d) -> ret=%-3d errno=%d (%s)",
+                     bufsize, used_len_mode, pc.used_len, r, e, e ? strerror(e) : "ok");
+              if (buf[0] && strcmp(buf, cmd) != 0)
+                  printf("  yanit=\"%s\"", buf);
+              printf("\n");
+              free(buf);
+              return (r >= 0) ? 0 : (e == EINVAL ? 1 : 2);
+              /* 0=basarili, 1=hala EINVAL, 2=farkli bir hata (ilginc olabilir) */
+          }
+
+          int main(int argc, char **argv)
+          {
+              static const int sizes[] = {
+                  8, 16, 24, 32, 48, 64, 80, 96, 100, 128,
+                  150, 192, 200, 256, 300, 400, 512, 1024, 2048, 4096
+              };
+              const char *ifname, *cmd;
+              int s, i, mode, any_diff = 0;
+
+              if (argc < 3) {
+                  fprintf(stderr, "kullanim: %s <arayuz> \"KOMUT ...\"\n", argv[0]);
+                  return 2;
+              }
+              ifname = argv[1];
+              cmd = argv[2];
+
+              s = socket(AF_INET, SOCK_DGRAM, 0);
+              if (s < 0) { perror("socket"); return 1; }
+
+              for (mode = 0; mode < 2; mode++) {
+                  printf("--- used_len_mode=%d taramasi basliyor ---\n", mode);
+                  for (i = 0; i < (int)(sizeof(sizes)/sizeof(sizes[0])); i++) {
+                      int rc = try_once(s, ifname, cmd, sizes[i], mode);
+                      if (rc != 1) {
+                          any_diff = 1;
+                          printf(">>> FARKLI SONUC, burada durduruluyor (bufsize=%d, mode=%d)\n",
+                                 sizes[i], mode);
+                          break;
+                      }
+                  }
+              }
+              close(s);
+              if (!any_diff)
+                  printf("Tum denemeler EINVAL ile sonuclandi, boyut sorunu degil gibi.\n");
+              return 0;
+          }
+          CEOF
+
+      - name: Compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          aarch64-linux-gnu-gcc -static -O2 -Wall -o dist/privsweep-arm64 privsweep.c
+          arm-linux-gnueabihf-gcc -static -O2 -Wall -o dist/privsweep-arm32 privsweep.c
+          ls -l dist
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: privsweep-binaries
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
