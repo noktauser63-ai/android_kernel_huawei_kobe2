@@ -289,6 +289,35 @@ jobs:
             done | tee logs/function_sizes.txt
           fi
 
+      - name: Find RX_VT_RCPI0 extraction (for RSSI patch --lsb)
+        if: success()
+        shell: bash
+        run: |
+          set -uo pipefail
+          OBJDUMP="${CROSS}objdump"
+          if [ ! -f out/vmlinux ]; then
+            echo "out/vmlinux yok, atlandi."
+          else
+            echo "vmlinux .text objdump -dl ile aciliyor ve nic_rx.c:1750-1770 araniyor (bu islem birkac dakika surebilir)..."
+            "$OBJDUMP" -dl out/vmlinux > /tmp/vmlinux_full.S
+            echo "objdump bitti, $(wc -l < /tmp/vmlinux_full.S) satir."
+
+            # nic_rx.c:1750 ile 1770 arasina isaret eden kaynak etiketlerinin
+            # dosyadaki satir numaralarini bul
+            grep -n 'nic_rx\.c:17[5-6][0-9]\b' /tmp/vmlinux_full.S > logs/rcpi_src_lines.txt || true
+            echo "eslesen kaynak etiketi sayisi: $(wc -l < logs/rcpi_src_lines.txt)"
+
+            # Her eslesmenin etrafindaki +-25 satiri (ilgili makine kodu) logs/rcpi_context.S'e yaz
+            : > logs/rcpi_context.S
+            while IFS=: read -r ln _; do
+              echo "===== vmlinux_full.S satir $ln civari =====" >> logs/rcpi_context.S
+              sed -n "$((ln>25?ln-25:1)),$((ln+25))p" /tmp/vmlinux_full.S >> logs/rcpi_context.S
+              echo >> logs/rcpi_context.S
+            done < logs/rcpi_src_lines.txt
+
+            wc -l logs/rcpi_context.S
+          fi
+
       - name: Repack boot.img (ci/boot_stock.img varsa)
         if: success()
         shell: bash
