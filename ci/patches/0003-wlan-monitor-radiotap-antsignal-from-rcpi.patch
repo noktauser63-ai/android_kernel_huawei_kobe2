@@ -1,0 +1,28 @@
+diff --git a/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/nic/nic_rx.c b/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/nic/nic_rx.c
+index 881912572..1c51b89b4 100644
+--- a/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/nic/nic_rx.c
++++ b/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/nic/nic_rx.c
+@@ -1571,9 +1571,20 @@ void nicRxProcessMonitorPacket(IN struct ADAPTER *prAdapter,
+ 		rMonitorRadiotap.u2ChFrequency = (ucChanNum * 5 + 5000);
+ 	}
+ 
+-	/* Bit Number 5 ANT SIGNAL */
+-	rMonitorRadiotap.ucAntennaSignal = (((
+-			prRxStatusGroup3)->u4RxVector[3] & RX_VT_IB_RSSI_MASK));
++	/* Bit Number 5 ANT SIGNAL
++	 * RxVector[3] bits 0-7 hold RCPI0; dBm = RCPI / 2 - 110.
++	 * RCPI > 220 (0xDC) is invalid -> report -128 dBm (radiotap "unknown").
++	 */
++	{
++		uint8_t ucRcpi = (uint8_t)(((prRxStatusGroup3)->u4RxVector[3] &
++			RX_VT_RCPI0_MASK) >> RX_VT_RCPI0_OFFSET);
++
++		if (ucRcpi <= 220)
++			rMonitorRadiotap.ucAntennaSignal =
++				(uint8_t)((ucRcpi >> 1) - 110);
++		else
++			rMonitorRadiotap.ucAntennaSignal = 0x80;
++	}
+ 
+ 	/* Bit Number 6 ANT NOISE */
+ 	rMonitorRadiotap.ucAntennaNoise = ((((
