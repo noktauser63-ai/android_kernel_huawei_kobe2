@@ -61,12 +61,22 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          for p in ci/patches/*.patch; do
+          patches=(ci/patches/*.patch)
+          echo "Bulunan yama sayisi: ${#patches[@]}"
+          [ "${#patches[@]}" -ge 3 ] || { echo "::error::Beklenen 3 yama (0001, 0002, 0003) yok"; exit 1; }
+          for p in "${patches[@]}"; do
             echo "== $p"
             git apply --check "$p"
             git apply "$p"
           done
           git diff --stat
+
+          # Yamalarin gercekten uygulandigini dogrula
+          W=drivers/misc/mediatek/connectivity/wlan_drv_gen4m/nic/nic_rx.c
+          grep -q 'prSwRfb->pvPacket = NULL;' "$W"   || { echo "::error::0001 uygulanmadi"; exit 1; }
+          grep -q 'ucRcpi <= 220' "$W"               || { echo "::error::0003 uygulanmadi"; exit 1; }
+          test -f drivers/misc/mediatek/mdp/mdp_ioctl_ex.c || { echo "::error::0002 uygulanmadi"; exit 1; }
+          echo "Yamalar dogrulandi: 0001 (pvPacket), 0002 (CMDQ ASYNC_EXEC/MDP), 0003 (RSSI)"
 
       - name: Install dependencies
         shell: bash
