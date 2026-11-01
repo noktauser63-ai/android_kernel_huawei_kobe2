@@ -1,0 +1,2493 @@
+diff --git a/drivers/misc/mediatek/Makefile b/drivers/misc/mediatek/Makefile
+index fa196cf77..9af6be6d0 100755
+--- a/drivers/misc/mediatek/Makefile
++++ b/drivers/misc/mediatek/Makefile
+@@ -115,6 +115,7 @@ obj-$(CONFIG_USB_MU3D_DRV)  += mu3d/
+ obj-$(CONFIG_MTK_RTC)	+= rtc/
+ obj-$(CONFIG_MTK_XO)	+= xo/
+ obj-$(CONFIG_MTK_CMDQ) += cmdq/
++obj-$(CONFIG_MTK_CMDQ) += mdp/
+ obj-$(CONFIG_MTK_SMI_EXT) += smi/
+ obj-$(CONFIG_MTK_LCM) += lcm/
+ obj-$(CONFIG_MTK_LCM) += ext_disp/
+diff --git a/drivers/misc/mediatek/cmdq/v3/Makefile b/drivers/misc/mediatek/cmdq/v3/Makefile
+index da19ce116..ab8b937dc 100644
+--- a/drivers/misc/mediatek/cmdq/v3/Makefile
++++ b/drivers/misc/mediatek/cmdq/v3/Makefile
+@@ -42,6 +42,7 @@ MDP_PLATFORM_DIR=$(srctree)/drivers/misc/mediatek/cmdq/v3/$(MTK_PLATFORM)
+ platformdir_exists=$(shell if [ -d ${MDP_PLATFORM_DIR} ]; then echo "y"; else echo "n"; fi;)
+ ifeq ($(platformdir_exists), y)
+ ccflags-y += -I$(MDP_PLATFORM_DIR)/
++ccflags-y += -I$(srctree)/drivers/misc/mediatek/mdp/
+ else
+ ccflags-y += -DCMDQ_COMMON_ENG_SUPPORT
+ endif
+diff --git a/drivers/misc/mediatek/cmdq/v3/cmdq_driver.c b/drivers/misc/mediatek/cmdq/v3/cmdq_driver.c
+index 9169d251c..3e4b36373 100644
+--- a/drivers/misc/mediatek/cmdq/v3/cmdq_driver.c
++++ b/drivers/misc/mediatek/cmdq/v3/cmdq_driver.c
+@@ -12,6 +12,8 @@
+  */
+ 
+ #include "cmdq_driver.h"
++#include "mdp_ioctl_ex.h"
++#include "mdp_def_ex.h"
+ #include "cmdq_struct.h"
+ #include "cmdq_virtual.h"
+ #include "cmdq_reg.h"
+@@ -673,7 +675,10 @@ static s32 cmdq_driver_ioctl_exec_command(struct file *pf, unsigned long param)
+ 	return 0;
+ }
+ 
+-static s32 cmdq_driver_ioctl_query_usage(struct file *pf, unsigned long param)
++void cmdq_driver_dump_readback(u32 *addrs, u32 count, u32 *values)
++{}
++
++s32 cmdq_driver_ioctl_query_usage(struct file *pf, unsigned long param)
+ {
+ 	int count[CMDQ_MAX_ENGINE_COUNT] = {0};
+ 
+@@ -967,7 +972,7 @@ static s32 cmdq_driver_ioctl_read_address_value(unsigned long param)
+ 	return 0;
+ }
+ 
+-static s32 cmdq_driver_ioctl_query_cap_bits(unsigned long param)
++s32 cmdq_driver_ioctl_query_cap_bits(unsigned long param)
+ {
+ 	int capBits = 0;
+ 
+@@ -982,7 +987,7 @@ static s32 cmdq_driver_ioctl_query_cap_bits(unsigned long param)
+ 	return 0;
+ }
+ 
+-static s32 cmdq_driver_ioctl_query_dts(unsigned long param)
++s32 cmdq_driver_ioctl_query_dts(unsigned long param)
+ {
+ 	struct cmdqDTSDataStruct *dts;
+ 
+@@ -996,7 +1001,7 @@ static s32 cmdq_driver_ioctl_query_dts(unsigned long param)
+ 	return 0;
+ }
+ 
+-static s32 cmdq_driver_ioctl_notify_engine(unsigned long param)
++s32 cmdq_driver_ioctl_notify_engine(unsigned long param)
+ {
+ 	u64 engineFlag;
+ 
+@@ -1051,6 +1056,26 @@ static long cmdq_ioctl(struct file *pf, unsigned int code,
+ 	case CMDQ_IOCTL_NOTIFY_ENGINE:
+ 		status = cmdq_driver_ioctl_notify_engine(param);
+ 		break;
++	case CMDQ_IOCTL_ASYNC_EXEC:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_ASYNC_EXEC\n");
++		status = mdp_ioctl_async_exec(pf, param);
++		break;
++	case CMDQ_IOCTL_ASYNC_WAIT:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_ASYNC_WAIT\n");
++		status = mdp_ioctl_async_wait(param);
++		break;
++	case CMDQ_IOCTL_ALLOC_READBACK_SLOTS:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_ALLOC_READBACK_SLOTS\n");
++		status = mdp_ioctl_alloc_readback_slots(pf, param);
++		break;
++	case CMDQ_IOCTL_FREE_READBACK_SLOTS:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_FREE_READBACK_SLOTS\n");
++		status = mdp_ioctl_free_readback_slots(pf, param);
++		break;
++	case CMDQ_IOCTL_READ_READBACK_SLOTS:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_READ_READBACK_SLOTS\n");
++		status = mdp_ioctl_read_readback_slots(param);
++		break;
+ 	default:
+ 		CMDQ_ERR("unrecognized ioctl 0x%08x\n", code);
+ 		return -ENOIOCTLCMD;
+@@ -1077,6 +1102,11 @@ static long cmdq_ioctl_compat(struct file *pFile, unsigned int code,
+ 	case CMDQ_IOCTL_QUERY_CAP_BITS:
+ 	case CMDQ_IOCTL_QUERY_DTS:
+ 	case CMDQ_IOCTL_NOTIFY_ENGINE:
++	case CMDQ_IOCTL_ASYNC_EXEC:
++	case CMDQ_IOCTL_ASYNC_WAIT:
++	case CMDQ_IOCTL_ALLOC_READBACK_SLOTS:
++	case CMDQ_IOCTL_FREE_READBACK_SLOTS:
++	case CMDQ_IOCTL_READ_READBACK_SLOTS:
+ 		/* All ioctl structures should be the same size in
+ 		 * 32-bit and 64-bit linux.
+ 		 */
+@@ -1251,6 +1281,8 @@ static int cmdq_probe(struct platform_device *pDevice)
+ 		CMDQ_ERR("%s attr inst count create fail\n", __func__);
+ #endif
+ 
++	mdp_limit_dev_create(pDevice);
++
+ 	CMDQ_LOG("CMDQ driver probe end\n");
+ 
+ 	return 0;
+@@ -1310,6 +1342,16 @@ static struct platform_driver gCmdqDriver = {
+ 	}
+ };
+ 
++static int __init mdp_late_init(void)
++{
++	CMDQ_LOG("%s begin\n", __func__);
++	mdp_limit_late_init();
++	CMDQ_LOG("%s end\n", __func__);
++
++	return 0;
++}
++late_initcall(mdp_late_init);
++
+ static int __init cmdq_init(void)
+ {
+ 	int status;
+@@ -1387,6 +1429,7 @@ static void __exit cmdq_exit(void)
+ 
+ 	/* De-Initialize cmdq dev related data */
+ 	cmdq_dev_deinit();
++	mdp_limit_dev_destroy();
+ 
+ 	CMDQ_LOG("CMDQ driver exit end\n");
+ }
+diff --git a/drivers/misc/mediatek/cmdq/v3/cmdq_driver.h b/drivers/misc/mediatek/cmdq/v3/cmdq_driver.h
+index 4abac360e..0ee22733d 100644
+--- a/drivers/misc/mediatek/cmdq/v3/cmdq_driver.h
++++ b/drivers/misc/mediatek/cmdq/v3/cmdq_driver.h
+@@ -107,4 +107,12 @@ struct cmdqWriteAddressStruct {
+ /*  */
+ #define CMDQ_IOCTL_NOTIFY_ENGINE _IOW(CMDQ_IOCTL_MAGIC_NUMBER, 12, uint64_t)
+ 
++
++s32 cmdq_driver_ioctl_query_usage(struct file *pf, unsigned long param);
++s32 cmdq_driver_ioctl_query_cap_bits(unsigned long param);
++s32 cmdq_driver_ioctl_query_dts(unsigned long param);
++s32 cmdq_driver_ioctl_notify_engine(unsigned long param);
++
++void cmdq_driver_dump_readback(u32 *addrs, u32 count, u32 *values);
++
+ #endif				/* __CMDQ_DRIVER_H__ */
+diff --git a/drivers/misc/mediatek/cmdq/v3/cmdq_mdp_common.c b/drivers/misc/mediatek/cmdq/v3/cmdq_mdp_common.c
+index 4a74a1745..df6edd758 100644
+--- a/drivers/misc/mediatek/cmdq/v3/cmdq_mdp_common.c
++++ b/drivers/misc/mediatek/cmdq/v3/cmdq_mdp_common.c
+@@ -1100,6 +1100,204 @@ static s32 cmdq_mdp_setup_sec(struct cmdqCommandStruct *desc,
+ 	return 0;
+ }
+ 
++s32 cmdq_mdp_handle_create(struct cmdqRecStruct **handle_out)
++{
++	struct cmdqRecStruct *handle = NULL;
++	s32 status;
++
++	status = cmdq_task_create(CMDQ_SCENARIO_USER_MDP, &handle);
++	if (status < 0) {
++		CMDQ_ERR("%s task create fail: %d\n", __func__, status);
++		return status;
++	}
++
++	handle->pkt->buf_pool = &mdp_pool;
++
++	/* assign handle for mdp */
++	*handle_out = handle;
++
++	return 0;
++}
++
++s32 cmdq_mdp_handle_sec_setup(struct cmdqSecDataStruct *secData,
++			struct cmdqRecStruct *handle)
++{
++#ifdef CMDQ_SECURE_PATH_SUPPORT
++	u32 i;
++	u32 metadata_length;
++	void *p_metadatas;
++
++	if (!secData || !secData->is_secure)
++		return 0;
++
++	cmdq_task_set_secure(handle, secData->is_secure);
++	handle->secData.enginesNeedDAPC = secData->enginesNeedDAPC;
++	handle->secData.enginesNeedPortSecurity =
++		secData->enginesNeedPortSecurity;
++	handle->secData.addrMetadataCount = secData->addrMetadataCount;
++
++	/* copy isp meta */
++	handle->secData.ispMeta = secData->ispMeta;
++	for (i = 0; i < ARRAY_SIZE(secData->ispMeta.ispBufs); i++) {
++		if (!handle->secData.ispMeta.ispBufs[i].size ||
++			!secData->ispMeta.ispBufs[i].va) {
++			handle->secData.ispMeta.ispBufs[i].va = 0;
++			handle->secData.ispMeta.ispBufs[i].size = 0;
++			continue;
++		}
++		handle->secData.ispMeta.ispBufs[i].va =
++			(cmdqU32Ptr_t)(unsigned long)vzalloc(
++			handle->secData.ispMeta.ispBufs[i].size);
++		if (!handle->secData.ispMeta.ispBufs[i].va) {
++			CMDQ_ERR("fail alloc ispMeta index:%d size:%#llx\n",
++				 i, handle->secData.ispMeta.ispBufs[i].size);
++			return -ENOMEM;
++		}
++		if (copy_from_user(
++			CMDQ_U32_PTR(handle->secData.ispMeta.ispBufs[i].va),
++			CMDQ_U32_PTR(secData->ispMeta.ispBufs[i].va),
++			handle->secData.ispMeta.ispBufs[i].size)) {
++			CMDQ_ERR("copy_from_user failed src:%#llx size:%#llx\n",
++				secData->ispMeta.ispBufs[i].va,
++				handle->secData.ispMeta.ispBufs[i].size);
++			kfree(CMDQ_U32_PTR(handle->secData.ispMeta.ispBufs[i].va));
++			handle->secData.ispMeta.ispBufs[i].size = 0;
++			return -ENOMEM;
++		}
++	}
++
++	if (!handle->secData.addrMetadataCount)
++		return 0;
++
++	metadata_length = (handle->secData.addrMetadataCount) *
++		sizeof(struct cmdqSecAddrMetadataStruct);
++	/* create sec data task buffer for working */
++	p_metadatas = kzalloc(metadata_length, GFP_KERNEL);
++	if (!p_metadatas) {
++		CMDQ_AEE("CMDQ",
++			"Can't alloc secData buffer count:%d alloacted_size:%d\n",
++			 handle->secData.addrMetadataCount,
++			 metadata_length);
++		return -ENOMEM;
++	}
++	if (copy_from_user(p_metadatas, CMDQ_U32_PTR(secData->addrMetadatas),
++		metadata_length)) {
++		CMDQ_ERR("copy_from_user failed src:%#llx metadata_length:%u\n",
++			secData->addrMetadatas, metadata_length);
++		kfree(p_metadatas);
++		return -ENOMEM;
++	}
++	handle->secData.addrMetadatas =
++		(cmdqU32Ptr_t)(unsigned long)p_metadatas;
++	return 0;
++#else
++	return 0;
++#endif
++}
++
++s32 cmdq_mdp_update_sec_addr_index(struct cmdqRecStruct *handle,
++	u32 sec_handle, u32 index, u32 instr_index)
++{
++#ifdef CMDQ_SECURE_PATH_SUPPORT
++	struct cmdqSecAddrMetadataStruct *addr;
++
++	if (!handle->secData.is_secure) {
++		CMDQ_ERR("%s invalid index %d, handle no sec\n",
++			__func__, index);
++		return -EINVAL;
++	}
++	if (index >= handle->secData.addrMetadataCount) {
++		CMDQ_ERR("%s invalid index %d >= %d\n", __func__,
++			index, handle->secData.addrMetadataCount);
++		return -EINVAL;
++	}
++	addr = (struct cmdqSecAddrMetadataStruct *)
++		(unsigned long)handle->secData.addrMetadatas;
++	addr[index].instrIndex = instr_index;
++	CMDQ_MSG("%s update %x[%d] to:%d\n", __func__,
++		sec_handle, index, instr_index);
++#endif
++	return 0;
++}
++
++u32 cmdq_mdp_handle_get_instr_count(struct cmdqRecStruct *handle)
++{
++	return handle->pkt->cmd_buf_size / CMDQ_INST_SIZE;
++}
++
++void cmdq_mdp_meta_replace_sec_addr(struct op_meta *metas,
++			struct mdp_submit *user_job,
++			struct cmdqRecStruct *handle)
++{
++#if 0
++	struct iwcCmdqAddrMetadata_t *addr;
++	int i;
++
++	CMDQ_LOG("%s start:%d, %d\n", __func__,
++		user_job->secData.is_secure,
++		user_job->secData.addrMetadataCount);
++
++	if (!user_job->secData.is_secure)
++		return;
++
++	addr = (struct iwcCmdqAddrMetadata_t *)
++		(unsigned long)handle->secData.addrMetadatas;
++	for (i = 0; i < handle->secData.addrMetadataCount; i++) {
++		u32 idx = addr[i].instrIndex;
++
++		CMDQ_LOG("sec[%u](i:%u,t:%u,h:%#llx,b:%#x,o:%#x,s:%d,p:%d)\n",
++			i, addr[i].instrIndex, addr[i].type,
++			addr[i].baseHandle, addr[i].blockOffset,
++			addr[i].offset, addr[i].size, addr[i].port);
++
++		CMDQ_LOG("[M] change meta[%u] (%u, %u, %#x, %#x, %#x)\n", idx,
++			metas[idx].op, metas[idx].engine, metas[idx].offset,
++			metas[idx].value, metas[idx].mask);
++	}
++#endif
++}
++
++s32 cmdq_mdp_handle_flush(struct cmdqRecStruct *handle)
++{
++	s32 status;
++
++	CMDQ_TRACE_FORCE_BEGIN("%s %llx\n", __func__, handle->engineFlag);
++	CMDQ_MSG("%s %llx\n", __func__, handle->engineFlag);
++	if (handle->profile_exec)
++		cmdq_pkt_perf_end(handle->pkt);
++
++#if defined(CONFIG_MTK_SEC_VIDEO_PATH_SUPPORT) || \
++	defined(CONFIG_MTK_CAM_SECURITY_SUPPORT)
++	if (handle->secData.is_secure) {
++		/* insert backup cookie cmd */
++		cmdq_sec_insert_backup_cookie_instr(handle, handle->thread);
++
++		/* prevent flush directly since engine conflict with normal */
++		handle->thread = CMDQ_INVALID_THREAD;
++	}
++#endif
++
++	/* finalize it */
++	CMDQ_MSG("%s finalize\n", __func__);
++	handle->finalized = true;
++	cmdq_pkt_finalize(handle->pkt);
++
++	/* Dispatch handle to get correct thread or wait in list.
++	 * Task may flush directly if no engine conflict and no waiting task
++	 * holds same engines.
++	 */
++	CMDQ_MSG("%s flush impl\n", __func__);
++	status = cmdq_mdp_flush_async_impl(handle);
++	CMDQ_TRACE_FORCE_END();
++	return status;
++}
++
++void cmdq_mdp_op_readback(struct cmdqRecStruct *handle, u16 engine,
++	dma_addr_t addr, u32 param)
++{
++	mdp_funcs.mdpComposeReadback(handle, engine, addr, param);
++}
++
+ s32 cmdq_mdp_flush_async(struct cmdqCommandStruct *desc, bool user_space,
+ 	struct cmdqRecStruct **handle_out)
+ {
+@@ -2637,6 +2835,21 @@ u64 cmdq_mdp_get_secure_engine_virtual(u64 engine_flag)
+ 	return 0;
+ }
+ 
++void cmdq_mdp_compose_readback_virtual(struct cmdqRecStruct *handle,
++	u16 engine, dma_addr_t dma, u32 param)
++{
++}
++
++static void mdp_readback_aal_virtual(struct cmdqRecStruct *handle,
++	u16 engine, phys_addr_t base, dma_addr_t pa, u32 param)
++{
++
++}
++static void mdp_readback_hdr_virtual(struct cmdqRecStruct *handle,
++	u16 engine, phys_addr_t base, dma_addr_t pa, u32 param)
++{
++}
++
+ void cmdq_mdp_virtual_function_setting(void)
+ {
+ 	struct cmdqMDPFuncStruct *pFunc;
+@@ -2698,6 +2911,9 @@ void cmdq_mdp_virtual_function_setting(void)
+ 	pFunc->endISPTask = cmdq_mdp_isp_end_task_virtual;
+ 	pFunc->CheckHwStatus = cmdq_mdp_check_hw_status_virtual;
+ 	pFunc->mdpGetSecEngine = cmdq_mdp_get_secure_engine_virtual;
++	pFunc->mdpComposeReadback = cmdq_mdp_compose_readback_virtual;
++	pFunc->mdpReadbackAal = mdp_readback_aal_virtual;
++	pFunc->mdpReadbackHdr = mdp_readback_hdr_virtual;
+ }
+ 
+ struct cmdqMDPFuncStruct *cmdq_mdp_get_func(void)
+@@ -3450,6 +3666,37 @@ const char *cmdq_mdp_parse_handle_error_module_by_hwflag(
+ 	return cmdq_mdp_get_func()->parseHandleErrModByEngFlag(handle);
+ }
+ 
++#include "mdp_base.h"
++u32 cmdq_mdp_get_hw_reg(enum MDP_ENG_BASE base, u16 offset)
++{
++	if (unlikely(offset > 0x1000)) {
++		CMDQ_ERR("%s: invalid offset:%#x\n", __func__, offset);
++		return 0;
++	}
++	offset &= ~0x3;
++	if (unlikely(base >= ENGBASE_COUNT)) {
++		CMDQ_ERR("%s: invalid engine:%u, offset:%#x\n",
++			__func__, base, offset);
++		return 0;
++	}
++	if (unlikely(mdp_base[base] == cmdq_dev_get_module_base_PA_GCE() &&
++		offset != 0x90)) {
++		CMDQ_ERR("%s: invalid engine:%u, offset:%#x\n",
++			__func__, base, offset);
++		return 0;
++	}
++	return mdp_base[base] + offset;
++}
++
++u32 cmdq_mdp_get_hw_port(enum MDP_ENG_BASE base)
++{
++	if (unlikely(base >= ENGBASE_COUNT)) {
++		CMDQ_ERR("%s: invalid engine:%u\n", __func__, base);
++		return 0;
++	}
++	return mdp_engine_port[base];
++}
++
+ #ifdef CMDQ_COMMON_ENG_SUPPORT
+ void cmdq_mdp_platform_function_setting(void)
+ {
+diff --git a/drivers/misc/mediatek/cmdq/v3/cmdq_mdp_common.h b/drivers/misc/mediatek/cmdq/v3/cmdq_mdp_common.h
+index 15c281719..baff65faf 100644
+--- a/drivers/misc/mediatek/cmdq/v3/cmdq_mdp_common.h
++++ b/drivers/misc/mediatek/cmdq/v3/cmdq_mdp_common.h
+@@ -98,6 +98,12 @@ typedef void (*CmdqCheckHwStatus) (struct cmdqRecStruct *handle);
+ 
+ typedef u64(*CmdqMdpGetSecEngine) (u64 engine_flag);
+ 
++typedef void (*CmdqMdpComposeReadback) (struct cmdqRecStruct *handle,
++	u16 engine, dma_addr_t dma, u32 param);
++
++typedef void (*CmdqMdpReadbackEngine) (struct cmdqRecStruct *handle,
++	u16 engine, phys_addr_t base, dma_addr_t pa, u32 param);
++
+ struct cmdqMDPFuncStruct {
+ #ifdef CONFIG_MTK_SMI_EXT
+ 	CmdqTranslatePort translatePort;
+@@ -136,6 +142,9 @@ struct cmdqMDPFuncStruct {
+ 	CmdqEndTaskCB endISPTask;
+ 	CmdqCheckHwStatus CheckHwStatus;
+ 	CmdqMdpGetSecEngine mdpGetSecEngine;
++	CmdqMdpComposeReadback mdpComposeReadback;
++	CmdqMdpReadbackEngine mdpReadbackAal;
++	CmdqMdpReadbackEngine mdpReadbackHdr;
+ };
+ 
+ struct mdp_pmqos_record {
+@@ -185,6 +194,8 @@ void cmdq_mdp_set_resource_callback(enum cmdq_event res_event,
+ 	CmdqResourceAvailableCB res_available,
+ 	CmdqResourceReleaseCB res_release);
+ void cmdq_mdp_unlock_thread(struct cmdqRecStruct *handle);
++void cmdq_mdp_op_readback(struct cmdqRecStruct *handle, u16 engine,
++	dma_addr_t addr, u32 param);
+ s32 cmdq_mdp_flush_async(struct cmdqCommandStruct *desc, bool user_space,
+ 	struct cmdqRecStruct **handle_out);
+ s32 cmdq_mdp_flush_async_impl(struct cmdqRecStruct *handle);
+@@ -197,6 +208,18 @@ void cmdq_mdp_resume(void);
+ void cmdq_mdp_release_task_by_file_node(void *file_node);
+ void cmdq_mdp_init(void);
+ void cmdq_mdp_deinit_pmqos(void);
++s32 cmdq_mdp_handle_create(struct cmdqRecStruct **handle_out);
++s32 cmdq_mdp_handle_flush(struct cmdqRecStruct *handle);
++s32 cmdq_mdp_handle_sec_setup(struct cmdqSecDataStruct *secData,
++			struct cmdqRecStruct *handle);
++
++struct op_meta;
++struct mdp_submit;
++s32 cmdq_mdp_update_sec_addr_index(struct cmdqRecStruct *handle,
++	u32 sec_handle, u32 index, u32 instr_index);
++u32 cmdq_mdp_handle_get_instr_count(struct cmdqRecStruct *handle);
++void cmdq_mdp_meta_replace_sec_addr(struct op_meta *metas,
++	struct mdp_submit *user_job, struct cmdqRecStruct *handle);
+ 
+ /* Platform dependent function */
+ 
+@@ -253,6 +276,9 @@ u32 cmdq_mdp_wdma_get_reg_offset_dst_addr(void);
+ 
+ void testcase_clkmgr_mdp(void);
+ 
++u32 cmdq_mdp_get_hw_reg(enum MDP_ENG_BASE base, u16 offset);
++u32 cmdq_mdp_get_hw_port(enum MDP_ENG_BASE base);
++
+ /* Platform virtual function setting */
+ void cmdq_mdp_platform_function_setting(void);
+ 
+diff --git a/drivers/misc/mediatek/cmdq/v3/cmdq_record.c b/drivers/misc/mediatek/cmdq/v3/cmdq_record.c
+index 2df39e2fb..8ed8a5095 100644
+--- a/drivers/misc/mediatek/cmdq/v3/cmdq_record.c
++++ b/drivers/misc/mediatek/cmdq/v3/cmdq_record.c
+@@ -3753,3 +3753,110 @@ s32 cmdqRecWriteAndReleaseResource(struct cmdqRecStruct *handle,
+ 		value, mask);
+ }
+ 
++
++/* ---- MDP ioctl layer (mdp_ioctl_ex.c) support, ported from Xiaomi OSS ---- */
++#define CMDQ_GET_ARG_B(arg)		(((arg) & GENMASK(31, 16)) >> 16)
++#define CMDQ_GET_ARG_C(arg)		((arg) & GENMASK(15, 0))
++
++s32 cmdq_handle_flush_cmd_buf(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf)
++{
++	return 0;
++}
++
++s32 cmdq_op_poll_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, u32 addr,
++	CMDQ_VARIABLE value, u32 mask)
++{
++	return cmdq_op_poll(handle, addr, (u32)value, mask);
++}
++
++s32 cmdq_op_read_reg_to_mem_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf,
++	cmdqBackupSlotHandle backup_slot, u32 slot_index, u32 addr)
++{
++	return cmdq_op_read_reg_to_mem(handle, backup_slot, slot_index, addr);
++}
++
++s32 cmdq_op_write_reg_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, u32 addr,
++	CMDQ_VARIABLE value, u32 mask)
++{
++	return cmdq_pkt_write_value_addr(handle->pkt, addr, value, mask);
++}
++
++s32 cmdq_op_wait_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event)
++{
++	return cmdq_op_wait(handle, event);
++}
++
++s32 cmdq_op_wait_no_clear_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event)
++{
++	return cmdq_op_wait_no_clear(handle, event);
++}
++
++s32 cmdq_op_clear_event_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event)
++{
++	return cmdq_op_clear_event(handle, event);
++}
++
++s32 cmdq_op_set_event_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event)
++{
++	return cmdq_op_set_event(handle, event);
++}
++
++s32 cmdq_op_acquire_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event)
++{
++	s32 arg_a = cmdq_get_event_op_id(event);
++	u32 arg_b;
++
++	if (arg_a < 0 || arg_a >= CMDQ_EVENT_MAX || !handle)
++		return -EINVAL;
++
++	/*
++	 * WFE arg_b
++	 * bit 0-11: wait value
++	 * bit 15: 1 - wait, 0 - no wait
++	 * bit 16-27: update value
++	 * bit 31: 1 - update, 0 - no update
++	 */
++	arg_b = CMDQ_WFE_UPDATE | CMDQ_WFE_UPDATE_VALUE | CMDQ_WFE_WAIT;
++	return cmdq_pkt_append_command(handle->pkt, CMDQ_GET_ARG_C(arg_b),
++		CMDQ_GET_ARG_B(arg_b), arg_a,
++		0, 0, 0, 0, CMDQ_CODE_WFE);
++}
++
++s32 cmdq_op_write_from_reg_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, u32 write_reg, u32 from_reg)
++{
++	s32 status;
++
++	if (!handle)
++		return -EINVAL;
++
++	status = cmdq_op_read_reg(handle, from_reg, &handle->arg_value, ~0);
++	if (status < 0)
++		return status;
++
++	return cmdq_op_write_reg(handle, write_reg, handle->arg_value, ~0);
++}
++
++s32 cmdq_alloc_write_addr(u32 count, dma_addr_t *paStart, u32 clt, void *fp)
++{
++	return cmdqCoreAllocWriteAddress(count, paStart, clt);
++}
++
++s32 cmdq_free_write_addr(dma_addr_t paStart, u32 clt)
++{
++	return cmdqCoreFreeWriteAddress(paStart, clt);
++}
++
++s32 cmdq_free_write_addr_by_node(u32 clt, void *fp)
++{
++	return 0;
++}
+diff --git a/drivers/misc/mediatek/cmdq/v3/cmdq_record.h b/drivers/misc/mediatek/cmdq/v3/cmdq_record.h
+index 401d6a60e..ad10dc6b6 100644
+--- a/drivers/misc/mediatek/cmdq/v3/cmdq_record.h
++++ b/drivers/misc/mediatek/cmdq/v3/cmdq_record.h
+@@ -894,4 +894,38 @@ s32 cmdq_op_read_mem(struct cmdqRecStruct *handle,
+ 	cmdqBackupSlotHandle h_backup_slot, u32 slot_index,
+ 	CMDQ_VARIABLE *arg_out);
+ 
++/* ---- MDP ioctl layer (mdp_ioctl_ex.c) support ---- */
++struct cmdq_command_buffer {
++	void *va_base;
++	u32 cmd_buf_size;
++	u32 avail_buf_size;
++};
++
++s32 cmdq_handle_flush_cmd_buf(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf);
++s32 cmdq_op_poll_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, u32 addr,
++	CMDQ_VARIABLE value, u32 mask);
++s32 cmdq_op_read_reg_to_mem_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf,
++	cmdqBackupSlotHandle backup_slot, u32 slot_index, u32 addr);
++s32 cmdq_op_write_reg_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, u32 addr,
++	CMDQ_VARIABLE value, u32 mask);
++s32 cmdq_op_wait_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event);
++s32 cmdq_op_wait_no_clear_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event);
++s32 cmdq_op_clear_event_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event);
++s32 cmdq_op_set_event_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event);
++s32 cmdq_op_acquire_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, enum cmdq_event event);
++s32 cmdq_op_write_from_reg_ex(struct cmdqRecStruct *handle,
++	struct cmdq_command_buffer *cmd_buf, u32 write_reg, u32 from_reg);
++s32 cmdq_alloc_write_addr(u32 count, dma_addr_t *paStart, u32 clt, void *fp);
++s32 cmdq_free_write_addr(dma_addr_t paStart, u32 clt);
++s32 cmdq_free_write_addr_by_node(u32 clt, void *fp);
++
+ #endif	/* __CMDQ_RECORD_H__ */
+diff --git a/drivers/misc/mediatek/cmdq/v3/mt6765/cmdq_engine.h b/drivers/misc/mediatek/cmdq/v3/mt6765/cmdq_engine.h
+index 42256f545..00667ea3e 100644
+--- a/drivers/misc/mediatek/cmdq/v3/mt6765/cmdq_engine.h
++++ b/drivers/misc/mediatek/cmdq/v3/mt6765/cmdq_engine.h
+@@ -174,4 +174,23 @@ enum CMDQ_GROUP_ENUM {
+ 	CMDQ_MAX_GROUP_COUNT,	/* ALWAYS keep at the end */
+ };
+ 
++enum MDP_ENG_BASE {
++	ENGBASE_MMSYS_CONFIG,
++	ENGBASE_MDP_RDMA0,
++	ENGBASE_MDP_CCORR0,
++	ENGBASE_MDP_RSZ0,
++	ENGBASE_MDP_RSZ1,
++	ENGBASE_MDP_WDMA,
++	ENGBASE_MDP_WROT0,
++	ENGBASE_MDP_TDSHP0,
++	ENGBASE_MDP_COLOR0,
++	ENGBASE_MMSYS_MUTEX,
++	ENGBASE_ISP_CAMSYS,
++	ENGBASE_ISP_CAM,
++	ENGBASE_ISP_CAM_DMA,
++	ENGBASE_IMGSYS,
++	ENGBASE_ISP_DIP1,
++	ENGBASE_COUNT
++};
++
+ #endif				/* __CMDQ_ENGINE_H__ */
+diff --git a/drivers/misc/mediatek/cmdq/v3/mt6765/mdp_base.h b/drivers/misc/mediatek/cmdq/v3/mt6765/mdp_base.h
+new file mode 100644
+index 000000000..338e802a4
+--- /dev/null
++++ b/drivers/misc/mediatek/cmdq/v3/mt6765/mdp_base.h
+@@ -0,0 +1,54 @@
++/*
++ * Copyright (C) 2020 MediaTek Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef __MDP_BASE_H__
++#define __MDP_BASE_H__
++
++#define MDP_HW_CHECK
++
++static u32 mdp_engine_port[ENGBASE_COUNT] = {
++	0,	/*ENGBASE_MMSYS_CONFIG*/
++	0,	/*ENGBASE_MDP_RDMA0*/
++	0,	/*ENGBASE_MDP_CCORR0*/
++	0,	/*ENGBASE_MDP_RSZ0*/
++	0,	/*ENGBASE_MDP_RSZ1*/
++	0,	/*ENGBASE_MDP_WDMA*/
++	0,	/*ENGBASE_MDP_WROT0*/
++	0,	/*ENGBASE_MDP_TDSHP0*/
++	0,	/*ENGBASE_MDP_COLOR0*/
++	0,	/*ENGBASE_MMSYS_MUTEX*/
++	0,	/*ENGBASE_ISP_CAMSYS*/
++	0,	/*ENGBASE_ISP_CAM*/
++	0,	/*ENGBASE_ISP_CAM_DMA*/
++	0,	/*ENGBASE_IMGSYS*/
++	0,	/*ENGBASE_ISP_DIP1*/
++};
++
++static u32 mdp_base[] = {
++	[ENGBASE_MMSYS_CONFIG] = 0x14000000,
++	[ENGBASE_MDP_RDMA0] = 0x14004000,
++	[ENGBASE_MDP_CCORR0] = 0x14005000,
++	[ENGBASE_MDP_RSZ0] = 0x14006000,
++	[ENGBASE_MDP_RSZ1] = 0x14007000,
++	[ENGBASE_MDP_WDMA] = 0x14008000,
++	[ENGBASE_MDP_WROT0] = 0x14009000,
++	[ENGBASE_MDP_TDSHP0] = 0x1400a000,
++	[ENGBASE_MDP_COLOR0] = 0x1400f000,
++	[ENGBASE_MMSYS_MUTEX] = 0x14001000,
++	[ENGBASE_ISP_CAMSYS] = 0x15000000,
++	[ENGBASE_ISP_CAM] = 0x15004000,
++	[ENGBASE_ISP_CAM_DMA] = 0x15007000,
++	[ENGBASE_IMGSYS] = 0x15020000,
++	[ENGBASE_ISP_DIP1] = 0x15022000,
++};
++#endif
+diff --git a/drivers/misc/mediatek/mdp/Makefile b/drivers/misc/mediatek/mdp/Makefile
+new file mode 100644
+index 000000000..3868264d5
+--- /dev/null
++++ b/drivers/misc/mediatek/mdp/Makefile
+@@ -0,0 +1,39 @@
++#
++# Copyright (C) 2015 MediaTek Inc.
++#
++# This program is free software: you can redistribute it and/or modify
++# it under the terms of the GNU General Public License version 2 as
++# published by the Free Software Foundation.
++#
++# This program is distributed in the hope that it will be useful,
++# but WITHOUT ANY WARRANTY; without even the implied warranty of
++# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++# GNU General Public License for more details.
++#
++
++# MDP user-space ioctl extension (CMDQ_IOCTL_ASYNC_EXEC & friends, mdp_limit)
++# on top of the legacy CMDQ v3 driver (cmdq/v3). Only these two objects come
++# from this directory; everything else lives in cmdq/v3.
++
++MTK_PLATFORM := $(CONFIG_MTK_PLATFORM)
++
++ccflags-y += -I$(srctree)/drivers/misc/mediatek/smi/ \
++	     -I$(srctree)/drivers/misc/mediatek/smi/$(MTK_PLATFORM)/ \
++	     -I$(srctree)/drivers/misc/mediatek/mmdvfs/ \
++	     -I$(srctree)/drivers/misc/mediatek/mmp/ \
++	     -I$(srctree)/drivers/misc/mediatek/mach/$(MTK_PLATFORM)/include \
++	     -I$(srctree)/drivers/iommu/ \
++	     -I$(srctree)/drivers/staging/android/ion \
++	     -I$(srctree)/drivers/staging/android/ion/mtk \
++	     -I$(srctree)/drivers/misc/mediatek/cmdq/v3/ \
++	     -I$(srctree)/drivers/misc/mediatek/cmdq/v3/$(MTK_PLATFORM)
++
++# keep in sync with cmdq/v3/Makefile
++ccflags-y += -DCMDQ_SPECIAL_ESD_PRIORITY
++ccflags-y += -D_CMDQ_DISABLE_MARKER_
++ifneq ($(strip $(CONFIG_MTK_GMO_RAM_OPTIMIZE)),y)
++ccflags-y += -DCMDQ_LARGE_MAX_FIRSTERROR_BUFFER
++endif
++
++obj-y += mdp_ioctl_ex.o
++obj-y += mdp_m4u.o
+diff --git a/drivers/misc/mediatek/mdp/mdp_def_ex.h b/drivers/misc/mediatek/mdp/mdp_def_ex.h
+new file mode 100644
+index 000000000..87ce255af
+--- /dev/null
++++ b/drivers/misc/mediatek/mdp/mdp_def_ex.h
+@@ -0,0 +1,177 @@
++/*
++ * Copyright (C) 2015 MediaTek Inc.
++ * Copyright (C) 2021 XiaoMi, Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef __MDP_DEF_EX_H__
++#define __MDP_DEF_EX_H__
++
++#include <linux/kernel.h>
++
++#define MDP_LIMIT_DRIVER_DEVICE_NAME         "mtk_mdp_limit"
++
++enum CMDQ_META_OP {
++	CMDQ_MOP_WRITE = 0,
++	CMDQ_MOP_READ,
++	CMDQ_MOP_POLL,
++	CMDQ_MOP_WAIT,
++	CMDQ_MOP_WAIT_NO_CLEAR,
++	CMDQ_MOP_CLEAR,
++	CMDQ_MOP_SET,
++	CMDQ_MOP_ACQUIRE,
++	CMDQ_MOP_WRITE_FD,
++	CMDQ_MOP_WRITE_FROM_REG,
++	CMDQ_MOP_WRITE_SEC,
++	CMDQ_MOP_READBACK,
++	CMDQ_MOP_NOP,
++};
++
++#define CMDQ_EVENT_WAIT 0x80008001
++#define CMDQ_EVENT_WAIT_NO_CLEAR 0x00008001
++#define CMDQ_EVENT_CLEAR 0x80000000
++#define CMDQ_EVENT_SET 0x80010000
++#define CMDQ_EVENT_ACQUIRE 0x80018000
++
++struct op_meta {
++	/* read/write/poll/wait/set */
++	uint8_t op;
++	/* id of hw */
++	uint16_t engine;
++	union {
++		/* register offset */
++		uint16_t offset;
++		/* event id */
++		uint16_t event;
++	};
++	union {
++		/* value to write */
++		uint32_t value;
++		/* for read */
++		uint32_t readback_id;
++		/* write FD */
++		uint32_t fd;
++		/* write sec */
++		uint32_t sec_handle;
++		/* write from register */
++		struct {
++			uint16_t from_offset;
++			uint16_t from_engine;
++		};
++	};
++	union {
++		/* for write with mask */
++		uint32_t mask;
++		/* Offset for fd */
++		uint32_t fd_offset;
++		/* index in cmdqSecDataStruct.addrMetadatas */
++		uint32_t sec_index;
++	};
++};
++
++struct hw_meta {
++	/* register offset */
++	uint16_t offset;
++	/* id of hw */
++	uint16_t engine;
++};
++
++struct mdp_submit {
++	/* [IN] mdp operations */
++	cmdqU32Ptr_t metas;
++	uint32_t meta_count;
++	/* [IN] task schedule priority. this is NOT HW thread priority. */
++	uint32_t priority;
++	/* [IN] bit flag of engines used. */
++	uint64_t engine_flag;
++	/* [IN] task property for pmqos */
++	uint32_t prop_size;
++	uint64_t prop_addr;
++	/* [IN] readback extension, each bit for 1 readback feature */
++	uint64_t readback_ext;
++	/* [IN] ids to represent readback register */
++	uint32_t read_count_v1;
++	cmdqU32Ptr_t hw_metas_read_v1;
++	/* [OUT] mdp job id in kernel */
++	uint64_t job_id;
++	/* [IN] secure execution data */
++	struct cmdqSecDataStruct secData;
++};
++
++struct mdp_read_v1 {
++	uint32_t count;
++	/* [OUT] values output buffer */
++	cmdqU32Ptr_t ret_values;
++};
++
++struct mdp_read_readback {
++	uint32_t count;
++	/* [IN] ids to represent readback ids */
++	cmdqU32Ptr_t ids;
++	/* [OUT] register values output buffer */
++	cmdqU32Ptr_t ret_values;
++};
++
++struct mdp_wait {
++	/* [IN] mdp job id in kernel */
++	uint64_t job_id;
++
++	/* [IN/OUT] mdp readback by input readback ids */
++	struct mdp_read_v1 read_v1_result;
++
++	/* [IN/OUT] mdp readback by input readback ids */
++	struct mdp_read_readback read_result;
++};
++
++struct mdp_readback {
++	/* [IN] count of the writable buffer
++	 * (unit is # of u32, NOT in byte)
++	 */
++	uint32_t count;
++
++	/* [OUT] When Alloc, this is the resulting PA.
++	 * It is guaranteed to be continuous.
++	 * [IN]  When Free, please pass returned address down to ioctl.
++	 *
++	 * indeed param startPA should be UNSIGNED LONG type for 64 bit kernel
++	 * Considering our plartform supports max 4GB RAM
++	 * (upper-32bit don't care for SW)
++	 * and consistent common code interface, remain u32 type.
++	 */
++	uint32_t start_id;
++};
++
++struct mdp_simulate {
++	cmdqU32Ptr_t metas;
++	uint32_t meta_count;
++	cmdqU32Ptr_t commands;
++	uint32_t command_size;
++	cmdqU32Ptr_t result_size;
++};
++
++#define CMDQ_IOCTL_MAGIC_NUMBER 'x'
++
++#define CMDQ_IOCTL_ASYNC_EXEC _IOW(CMDQ_IOCTL_MAGIC_NUMBER, 20, \
++	struct mdp_submit)
++#define CMDQ_IOCTL_ASYNC_WAIT _IOR(CMDQ_IOCTL_MAGIC_NUMBER, 21, \
++	struct mdp_wait)
++
++#define CMDQ_IOCTL_ALLOC_READBACK_SLOTS _IOW(CMDQ_IOCTL_MAGIC_NUMBER, 22, \
++	struct mdp_readback)
++#define CMDQ_IOCTL_FREE_READBACK_SLOTS _IOW(CMDQ_IOCTL_MAGIC_NUMBER, 23, \
++	struct mdp_readback)
++#define CMDQ_IOCTL_READ_READBACK_SLOTS _IOW(CMDQ_IOCTL_MAGIC_NUMBER, 24, \
++	struct mdp_read_readback)
++
++#define CMDQ_IOCTL_SIMULATE _IOR(CMDQ_IOCTL_MAGIC_NUMBER, 25, \
++	struct mdp_simulate)
++
++#endif	/* __MDP_DEF_EX_H__ */
+diff --git a/drivers/misc/mediatek/mdp/mdp_ioctl_ex.c b/drivers/misc/mediatek/mdp/mdp_ioctl_ex.c
+new file mode 100644
+index 000000000..4a3880cfc
+--- /dev/null
++++ b/drivers/misc/mediatek/mdp/mdp_ioctl_ex.c
+@@ -0,0 +1,1246 @@
++/*
++ * Copyright (C) 2015 MediaTek Inc.
++ * Copyright (C) 2021 XiaoMi, Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#include <linux/platform_device.h>
++#include <linux/fs.h>
++#include <linux/cdev.h>
++#include <linux/errno.h>
++#include <linux/slab.h>
++#include <linux/vmalloc.h>
++#include <linux/spinlock.h>
++#include <linux/sched/clock.h>
++
++#ifdef CONFIG_MTK_CMDQ_MBOX_EXT
++#include "mdp_def.h"
++#include "mdp_common.h"
++#include "mdp_driver.h"
++#include "mdp_cmdq_helper_ext.h"
++#include "mdp_cmdq_record.h"
++#include "mdp_cmdq_device.h"
++#else
++#include "cmdq_def.h"
++#include "cmdq_mdp_common.h"
++#include "cmdq_driver.h"
++#include "cmdq_record.h"
++#ifndef MDP_META_IN_LEGACY_V2
++#include "cmdq_helper_ext.h"
++#else
++#include "cmdq_core.h"
++#endif
++#include "cmdq_device.h"
++#endif
++#include "mdp_def_ex.h"
++#include "mdp_ioctl_ex.h"
++#include "cmdq_struct.h"
++#include "mdp_m4u.h"
++
++#ifdef MDP_M4U_TEE_SUPPORT
++static atomic_t m4u_init = ATOMIC_INIT(0);
++#endif
++#ifdef MDP_M4U_MTEE_SUPPORT
++static atomic_t m4u_gz_init = ATOMIC_INIT(0);
++#endif
++
++static int mdp_limit_open(struct inode *pInode, struct file *pFile)
++{
++	struct cmdqFileNodeStruct *pNode;
++
++	CMDQ_VERBOSE("mdp limit driver open fd=%p begin\n", pFile);
++
++	pFile->private_data = kzalloc(sizeof(struct cmdqFileNodeStruct),
++		GFP_KERNEL);
++	if (!pFile->private_data) {
++		CMDQ_ERR("Can't allocate memory for mdp limit file node\n");
++		return -ENOMEM;
++	}
++
++	pNode = (struct cmdqFileNodeStruct *)pFile->private_data;
++	pNode->userPID = current->pid;
++	pNode->userTGID = current->tgid;
++
++	INIT_LIST_HEAD(&(pNode->taskList));
++	spin_lock_init(&pNode->nodeLock);
++
++	CMDQ_VERBOSE("mdp limit driver open end\n");
++
++	return 0;
++}
++
++
++static int mdp_limit_release(struct inode *pInode, struct file *pFile)
++{
++	struct cmdqFileNodeStruct *pNode;
++	unsigned long flags;
++
++	CMDQ_VERBOSE("mdp limit driver release fd=%p begin\n", pFile);
++
++	pNode = (struct cmdqFileNodeStruct *)pFile->private_data;
++
++	if (!pNode) {
++		CMDQ_ERR("mdp limit file node NULL\n");
++		return -EFAULT;
++	}
++
++	spin_lock_irqsave(&pNode->nodeLock, flags);
++
++	/* note that we did not release CMDQ tasks
++	 * issued by this file node,
++	 * since their HW operation may be pending.
++	 */
++
++	spin_unlock_irqrestore(&pNode->nodeLock, flags);
++
++	/* scan through tasks that created by
++	 * this file node and release them
++	 */
++	cmdq_mdp_release_task_by_file_node((void *)pNode);
++
++	kfree(pFile->private_data);
++	pFile->private_data = NULL;
++
++	cmdq_free_write_addr_by_node(CMDQ_CLT_MDP, pFile);
++
++	CMDQ_VERBOSE("CMDQ driver release end\n");
++
++	return 0;
++}
++
++#define MAX_HANDLE_NUM 10
++
++static u64 job_mapping_idx = 1;
++static struct list_head job_mapping_list;
++struct mdp_job_mapping {
++	u64 id;
++	struct cmdqRecStruct *job;
++	struct list_head list_entry;
++	struct ion_handle *handles[MAX_HANDLE_NUM];
++	int fds[MAX_HANDLE_NUM];
++	u32 mvas[MAX_HANDLE_NUM];
++	u32 handle_count;
++};
++static DEFINE_MUTEX(mdp_job_mapping_list_mutex);
++
++#define SLOT_GROUP_NUM 64
++#define MAX_RB_SLOT_NUM (SLOT_GROUP_NUM*64)
++#define MAX_COUNT_IN_RB_SLOT 0x1000 /* 4KB */
++#define SLOT_ID_SHIFT 16
++#define SLOT_OFFSET_MASK 0xFFFF
++
++struct mdp_readback_slot {
++	u32 count;
++	dma_addr_t pa_start;
++	void *fp;
++};
++
++static struct mdp_readback_slot rb_slot[MAX_RB_SLOT_NUM];
++static u64 alloc_slot[SLOT_GROUP_NUM];
++static u64 alloc_slot_group;
++static DEFINE_MUTEX(rb_slot_list_mutex);
++
++static dma_addr_t translate_read_id_ex(u32 read_id, u32 *slot_offset)
++{
++	u32 slot_id;
++
++	slot_id = read_id >> SLOT_ID_SHIFT;
++	*slot_offset = read_id & SLOT_OFFSET_MASK;
++	CMDQ_MSG("translate read id:%#x\n", read_id);
++	if (unlikely(slot_id >= MAX_RB_SLOT_NUM ||
++		*slot_offset >= rb_slot[slot_id].count)) {
++		CMDQ_ERR("invalid read id:%#x\n", read_id);
++		*slot_offset = 0;
++		return 0;
++	}
++	if (!rb_slot[slot_id].pa_start)
++		*slot_offset = 0;
++	return rb_slot[slot_id].pa_start;
++}
++
++static dma_addr_t translate_read_id(u32 read_id)
++{
++	u32 slot_offset;
++
++	return translate_read_id_ex(read_id, &slot_offset)
++		+ slot_offset * sizeof(u32);
++}
++
++static s32 mdp_process_read_request(struct mdp_read_readback *req_user)
++{
++	/* create kernel-space buffer for working */
++	u32 *ids = NULL;
++	u32 *addrs = NULL;
++	u32 *values = NULL;
++	void *ids_user;
++	void *values_user;
++	s32 status = -EINVAL;
++	u32 count, i;
++
++	CMDQ_SYSTRACE_BEGIN("%s\n", __func__);
++
++	do {
++		if (!req_user || !req_user->count ||
++			req_user->count > CMDQ_MAX_DUMP_REG_COUNT) {
++			CMDQ_MSG("[READ_PA] no need to readback\n");
++			status = 0;
++			break;
++		}
++
++		count = req_user->count;
++		CMDQ_MSG("[READ_PA] %s - count:%d\n", __func__, count);
++		ids_user = (void *)CMDQ_U32_PTR(req_user->ids);
++		values_user = (void *)CMDQ_U32_PTR(req_user->ret_values);
++		if (!ids_user || !values_user) {
++			CMDQ_ERR("[READ_PA] invalid in/out addr\n");
++			break;
++		}
++
++		ids = kcalloc(count, sizeof(u32), GFP_KERNEL);
++		if (!ids) {
++			CMDQ_ERR("[READ_PA] fail to alloc id buf\n");
++			status = -ENOMEM;
++			break;
++		}
++
++		addrs = kcalloc(count, sizeof(u32), GFP_KERNEL);
++		if (!ids) {
++			CMDQ_ERR("[READ_PA] fail to alloc addr buf\n");
++			status = -ENOMEM;
++			break;
++		}
++
++		values = kcalloc(count, sizeof(u32), GFP_KERNEL);
++		if (!values) {
++			CMDQ_ERR("[READ_PA] fail to alloc value buf\n");
++			status = -ENOMEM;
++			break;
++		}
++
++		if (copy_from_user(ids, ids_user, count * sizeof(u32))) {
++			CMDQ_ERR("[READ_PA] copy user:0x%p fail\n", ids_user);
++			break;
++		}
++
++		status = 0;
++		/* TODO: Refine read PA write buffers efficiency */
++		for (i = 0; i < count; i++) {
++			addrs[i] = translate_read_id(ids[i]);
++			CMDQ_MSG("[READ_PA] %s: [%d]-%x=%pa\n",
++				__func__, i, ids[i], &addrs[i]);
++			if (unlikely(!addrs[i])) {
++				status = -EINVAL;
++				break;
++			}
++		}
++		if (status < 0)
++			break;
++
++		CMDQ_SYSTRACE_BEGIN("%s_copy_to_user_%u\n", __func__, count);
++
++		cmdqCoreReadWriteAddressBatch(addrs, count, values);
++		cmdq_driver_dump_readback(addrs, count, values);
++
++		/* copy value to user */
++		if (copy_to_user(values_user, values, count * sizeof(u32))) {
++			CMDQ_ERR("[READ_PA] fail to copy to user\n");
++			status = -EINVAL;
++		}
++
++		CMDQ_SYSTRACE_END();
++	} while (0);
++
++	kfree(ids);
++	kfree(addrs);
++	kfree(values);
++
++	CMDQ_SYSTRACE_END();
++	return status;
++}
++
++static unsigned long translate_fd(struct op_meta *meta,
++				struct mdp_job_mapping *mapping_job)
++{
++	struct ion_handle *ion_h;
++	unsigned long mva = 0;
++	u32 i;
++	u32 port = cmdq_mdp_get_hw_port(meta->engine);
++
++	if (!port)
++		return 0;
++
++	for (i = 0; i < mapping_job->handle_count; i++)
++		if (mapping_job->fds[i] == meta->fd)
++			break;
++
++	if (i == mapping_job->handle_count) {
++		if (i >= MAX_HANDLE_NUM) {
++			CMDQ_ERR("%s no more handle room\n", __func__);
++			return 0;
++		}
++		/* need to map ion handle and mva */
++		ion_h = mdp_ion_import_handle(meta->fd);
++		if (!ion_h)
++			return 0;
++
++		mdp_ion_get_mva(ion_h, &mva, 0, port);
++		if (mva) {
++			mapping_job->fds[i] = meta->fd;
++			mapping_job->handles[i] = ion_h;
++			mapping_job->mvas[i] = mva;
++			mapping_job->handle_count++;
++		} else {
++			mdp_ion_free_handle(ion_h);
++			return 0;
++		}
++	} else {
++		mva = mapping_job->mvas[i];
++	}
++	mva += meta->fd_offset;
++
++	return mva;
++}
++
++static s32 translate_meta(struct op_meta *meta,
++			struct mdp_job_mapping *mapping_job,
++			struct cmdqRecStruct *handle,
++			struct cmdq_command_buffer *cmd_buf)
++{
++	u32 reg_addr;
++	s32 status = 0;
++
++	switch (meta->op) {
++	case CMDQ_MOP_WRITE_FD:
++	{
++		unsigned long mva = translate_fd(meta, mapping_job);
++
++		reg_addr = cmdq_mdp_get_hw_reg(meta->engine, meta->offset);
++		if (!reg_addr || !mva)
++			return -EINVAL;
++		status = cmdq_op_write_reg_ex(handle, cmd_buf,
++			reg_addr, mva, ~0);
++		break;
++	}
++	case CMDQ_MOP_WRITE:
++		reg_addr = cmdq_mdp_get_hw_reg(meta->engine, meta->offset);
++		if (!reg_addr)
++			return -EINVAL;
++		status = cmdq_op_write_reg_ex(handle, cmd_buf, reg_addr,
++					meta->value, meta->mask);
++		break;
++	case CMDQ_MOP_READ:
++	{
++		u32 offset;
++		dma_addr_t dram_addr;
++
++		reg_addr = cmdq_mdp_get_hw_reg(meta->engine, meta->offset);
++		dram_addr = translate_read_id_ex(meta->readback_id, &offset);
++		if (!reg_addr || !dram_addr)
++			return -EINVAL;
++		status = cmdq_op_read_reg_to_mem_ex(handle, cmd_buf,
++						dram_addr, offset, reg_addr);
++		break;
++	}
++	case CMDQ_MOP_READBACK:
++	{
++		dma_addr_t dram_addr;
++		u32 offset;
++
++		dram_addr = translate_read_id_ex(meta->readback_id, &offset);
++		if (!dram_addr)
++			return -EINVAL;
++
++		/* flush first since readback add commands to pkt */
++		cmdq_handle_flush_cmd_buf(handle, cmd_buf);
++
++		cmdq_mdp_op_readback(handle, meta->engine,
++			dram_addr + offset * sizeof(u32), meta->mask);
++		break;
++	}
++	case CMDQ_MOP_POLL:
++		reg_addr = cmdq_mdp_get_hw_reg(meta->engine, meta->offset);
++		if (!reg_addr)
++			return -EINVAL;
++		status = cmdq_op_poll_ex(handle, cmd_buf, reg_addr,
++					meta->value, meta->mask);
++		break;
++	case CMDQ_MOP_WAIT:
++		status = cmdq_op_wait_ex(handle, cmd_buf, meta->event);
++		break;
++	case CMDQ_MOP_WAIT_NO_CLEAR:
++		status = cmdq_op_wait_no_clear_ex(handle, cmd_buf, meta->event);
++		break;
++	case CMDQ_MOP_CLEAR:
++		status = cmdq_op_clear_event_ex(handle, cmd_buf, meta->event);
++		break;
++	case CMDQ_MOP_SET:
++		status = cmdq_op_set_event_ex(handle, cmd_buf, meta->event);
++		break;
++	case CMDQ_MOP_ACQUIRE:
++		status = cmdq_op_acquire_ex(handle, cmd_buf, meta->event);
++		break;
++	case CMDQ_MOP_WRITE_FROM_REG:
++	{
++		u32 from_reg = cmdq_mdp_get_hw_reg(meta->from_engine,
++						meta->from_offset);
++
++		reg_addr = cmdq_mdp_get_hw_reg(meta->engine, meta->offset);
++		if (!reg_addr || !from_reg)
++			return -EINVAL;
++		status = cmdq_op_write_from_reg_ex(handle, cmd_buf,
++					reg_addr, from_reg);
++		break;
++	}
++	case CMDQ_MOP_WRITE_SEC:
++	{
++		reg_addr = cmdq_mdp_get_hw_reg(meta->engine, meta->offset);
++		if (!reg_addr)
++			return -EINVAL;
++		status = cmdq_op_write_reg_ex(handle, cmd_buf, reg_addr,
++					meta->value, ~0);
++		/* use total buffer size count in translation */
++		if (!status) {
++			/* flush to make sure count is correct */
++			cmdq_handle_flush_cmd_buf(handle, cmd_buf);
++			status = cmdq_mdp_update_sec_addr_index(handle,
++				meta->sec_handle, meta->sec_index,
++				cmdq_mdp_handle_get_instr_count(handle) - 1);
++		}
++		break;
++	}
++	case CMDQ_MOP_NOP:
++		break;
++	default:
++		CMDQ_ERR("invalid meta op:%u\n", meta->op);
++		status = -EINVAL;
++		break;
++	}
++
++	return status;
++}
++
++static s32 translate_user_job(struct mdp_submit *user_job,
++			struct mdp_job_mapping *mapping_job,
++			struct cmdqRecStruct *handle,
++			struct cmdq_command_buffer *cmd_buf)
++{
++	struct op_meta *metas;
++	s32 status = 0;
++	u32 i, copy_size, copy_count, remain_count;
++	void *cur_src = CMDQ_U32_PTR(user_job->metas);
++	const u32 meta_count_in_page = PAGE_SIZE / sizeof(struct op_meta);
++
++	metas = kmalloc(PAGE_SIZE, GFP_KERNEL);
++	if (!metas) {
++		CMDQ_ERR("allocate metas fail\n");
++		return -ENOMEM;
++	}
++	cmdq_mdp_meta_replace_sec_addr(metas, user_job, handle);
++
++	remain_count = user_job->meta_count;
++	while (remain_count > 0) {
++		copy_count = min_t(u32, remain_count, meta_count_in_page);
++		copy_size = copy_count * sizeof(struct op_meta);
++		if (copy_from_user(metas, cur_src, copy_size)) {
++			CMDQ_ERR("copy metas from user fail:%u\n", copy_size);
++			kfree(metas);
++			return -EINVAL;
++		}
++
++		for (i = 0; i < copy_count; i++) {
++#ifdef META_DEBUG
++			CMDQ_MSG("translate meta[%u] (%u,%u,%#x,%#x,%#x)\n", i,
++				metas[i].op, metas[i].engine, metas[i].offset,
++				metas[i].value, metas[i].mask);
++#endif
++			status = translate_meta(&metas[i], mapping_job,
++						handle, cmd_buf);
++			if (unlikely(status < 0)) {
++				CMDQ_ERR(
++					"translate[%u] fail: %d meta: (%u,%u,%#x,%#x,%#x)\n",
++					i, status, metas[i].op,
++					metas[i].engine, metas[i].offset,
++					metas[i].value, metas[i].mask);
++				break;
++			}
++		}
++		remain_count -= copy_count;
++		cur_src += copy_size;
++	}
++
++	kfree(metas);
++	return status;
++}
++
++static s32 cmdq_mdp_handle_setup(struct mdp_submit *user_job,
++				struct task_private *desc_private,
++				struct cmdqRecStruct *handle)
++{
++#ifndef MDP_META_IN_LEGACY_V2
++	const u64 inorder_mask = 1ll << CMDQ_ENG_INORDER;
++
++	handle->engineFlag = user_job->engine_flag & ~inorder_mask;
++	handle->pkt->priority = user_job->priority;
++	handle->user_debug_str = NULL;
++
++	if (user_job->engine_flag & inorder_mask)
++		handle->force_inorder = true;
++
++	if (desc_private)
++		handle->node_private = desc_private->node_private_data;
++
++	if (user_job->prop_size && user_job->prop_addr &&
++		user_job->prop_size < CMDQ_MAX_USER_PROP_SIZE) {
++		handle->prop_addr = kzalloc(user_job->prop_size, GFP_KERNEL);
++		handle->prop_size = user_job->prop_size;
++		if (copy_from_user(handle->prop_addr,
++				CMDQ_U32_PTR(user_job->prop_addr),
++				user_job->prop_size)) {
++			CMDQ_ERR("copy prop_addr from user fail\n");
++			return -EINVAL;
++		}
++	} else {
++		handle->prop_addr = NULL;
++		handle->prop_size = 0;
++	}
++#else
++	handle->engineFlag = user_job->engine_flag;
++	handle->priority = user_job->priority;
++#endif
++	return 0;
++}
++
++static int mdp_implement_read_v1(struct mdp_submit *user_job,
++				struct cmdqRecStruct *handle,
++				struct cmdq_command_buffer *cmd_buf)
++{
++	int status = 0;
++	struct hw_meta *hw_metas = NULL;
++	const u32 count = user_job->read_count_v1;
++	u32 reg_addr, i;
++
++	if (!count || !user_job->hw_metas_read_v1)
++		return 0;
++
++	CMDQ_MSG("%s: readback count: %u\n", __func__, count);
++	hw_metas = kcalloc(count, sizeof(struct hw_meta), GFP_KERNEL);
++	if (!hw_metas) {
++		CMDQ_ERR("allocate hw_metas fail\n");
++		return -ENOMEM;
++	}
++
++	/* collect user space dump request */
++	if (copy_from_user(hw_metas, CMDQ_U32_PTR(user_job->hw_metas_read_v1),
++			count * sizeof(struct hw_meta))) {
++		CMDQ_ERR("copy hw_metas from user fail\n");
++		kfree(hw_metas);
++		return -EFAULT;
++	}
++
++	handle->user_reg_count = count;
++	handle->user_token = 0;
++	handle->reg_count = count;
++	handle->reg_values = cmdq_core_alloc_hw_buffer(cmdq_dev_get(),
++		count * sizeof(handle->reg_values[0]),
++		&handle->reg_values_pa, GFP_KERNEL);
++	if (!handle->reg_values) {
++		CMDQ_ERR("allocate hw buffer fail\n");
++		kfree(hw_metas);
++		return -ENOMEM;
++	}
++
++	/* TODO v2: use reg_to_mem does not efficient due to event */
++	/* insert commands to read back regs into slot */
++	for (i = 0; i < count; i++) {
++		reg_addr = cmdq_mdp_get_hw_reg(hw_metas[i].engine,
++						hw_metas[i].offset);
++		CMDQ_MSG("%s: read[%d] engine[%d], offset[%x], addr[%x]\n",
++			__func__, i, hw_metas[i].engine,
++			hw_metas[i].offset, reg_addr);
++		cmdq_op_read_reg_to_mem_ex(handle, cmd_buf,
++				handle->reg_values_pa, i, reg_addr);
++	}
++
++	kfree(hw_metas);
++	return status;
++}
++
++#define CMDQ_MAX_META_COUNT 0x100000
++
++s32 mdp_ioctl_async_exec(struct file *pf, unsigned long param)
++{
++	struct mdp_submit user_job;
++	struct task_private desc_private = {0};
++	struct cmdqRecStruct *handle = NULL;
++	s32 status;
++	u64 exec_cost;
++	struct cmdq_command_buffer cmd_buf;
++	struct mdp_job_mapping *mapping_job = NULL;
++
++	mapping_job = kzalloc(sizeof(*mapping_job), GFP_KERNEL);
++	if (!mapping_job)
++		return -ENOMEM;
++
++	if (copy_from_user(&user_job, (void *)param, sizeof(user_job))) {
++		CMDQ_ERR("copy mdp_submit from user fail\n");
++		kfree(mapping_job);
++		return -EFAULT;
++	}
++
++	if (user_job.read_count_v1 > CMDQ_MAX_DUMP_REG_COUNT ||
++		!user_job.meta_count ||
++		user_job.meta_count > CMDQ_MAX_META_COUNT ||
++		user_job.prop_size > CMDQ_MAX_USER_PROP_SIZE) {
++		CMDQ_ERR("invalid read count:%u meta count:%u prop size:%u\n",
++			user_job.read_count_v1,
++			user_job.meta_count, user_job.prop_size);
++		kfree(mapping_job);
++		return -EINVAL;
++	}
++
++	cmd_buf.va_base = kmalloc(PAGE_SIZE, GFP_KERNEL);
++	if (!cmd_buf.va_base) {
++		CMDQ_ERR("%s allocate cmd_buf fail!\n", __func__);
++		kfree(mapping_job);
++		return -ENOMEM;
++	}
++	cmd_buf.avail_buf_size = PAGE_SIZE;
++
++	status = cmdq_mdp_handle_create(&handle);
++	if (status < 0) {
++		kfree(mapping_job);
++		kfree(cmd_buf.va_base);
++		return status;
++	}
++
++	status = cmdq_mdp_handle_setup(&user_job, &desc_private, handle);
++	if (status < 0) {
++		CMDQ_ERR("%s setup fail:%d\n", __func__, status);
++		cmdq_task_destroy(handle);
++		kfree(mapping_job);
++		kfree(cmd_buf.va_base);
++		return status;
++	}
++
++#ifdef MDP_M4U_TEE_SUPPORT
++	if (atomic_cmpxchg(&m4u_init, 0, 1) == 0) {
++		m4u_sec_init();
++		CMDQ_LOG("[SEC] m4u_sec_init is called\n");
++	}
++#endif
++#ifdef MDP_M4U_MTEE_SUPPORT
++	if (atomic_cmpxchg(&m4u_gz_init, 0, 1) == 0) {
++		// 0: SEC_ID_SEC_CAM
++		m4u_gz_sec_init(0);
++		CMDQ_LOG("[SEC] m4u_gz_sec_init is called\n");
++	}
++#endif
++
++	/* setup secure data */
++	status = cmdq_mdp_handle_sec_setup(&user_job.secData, handle);
++	if (status < 0) {
++		CMDQ_ERR("%s config sec fail:%d\n", __func__, status);
++		cmdq_task_destroy(handle);
++		kfree(mapping_job);
++		kfree(cmd_buf.va_base);
++		return status;
++	}
++
++	/* Make command from user job */
++	exec_cost = sched_clock();
++	status = translate_user_job(&user_job, mapping_job, handle, &cmd_buf);
++	exec_cost = div_s64(sched_clock() - exec_cost, 1000);
++	if (exec_cost > 3000) {
++		CMDQ_ERR("[warn]translate job[%d] cost:%lluus\n",
++			user_job.meta_count, exec_cost);
++	} else {
++		CMDQ_MSG("[log]translate job[%d] cost:%lluus\n",
++			user_job.meta_count, exec_cost);
++	}
++
++	if (status < 0) {
++		CMDQ_ERR("%s translate fail:%d\n", __func__, status);
++		cmdq_task_destroy(handle);
++		kfree(mapping_job);
++		kfree(cmd_buf.va_base);
++		return status;
++	}
++
++	status = mdp_implement_read_v1(&user_job, handle, &cmd_buf);
++	if (status < 0) {
++		CMDQ_ERR("%s read_v1 fail:%d\n", __func__, status);
++		cmdq_task_destroy(handle);
++		kfree(mapping_job);
++		kfree(cmd_buf.va_base);
++		return status;
++	}
++
++	if (cmdq_handle_flush_cmd_buf(handle, &cmd_buf)) {
++		cmdq_task_destroy(handle);
++		kfree(mapping_job);
++		kfree(cmd_buf.va_base);
++		return -EFAULT;
++	}
++
++	/* cmdq_pkt_dump_command(handle); */
++	kfree(cmd_buf.va_base);
++	/* flush */
++	status = cmdq_mdp_handle_flush(handle);
++
++	if (status < 0) {
++		CMDQ_ERR("%s flush fail:%d\n", __func__, status);
++		if (handle) {
++#ifndef MDP_META_IN_LEGACY_V2
++			if (handle->thread != CMDQ_INVALID_THREAD)
++				cmdq_mdp_unlock_thread(handle);
++#endif
++			cmdq_task_destroy(handle);
++		}
++
++		kfree(mapping_job);
++		return status;
++	}
++
++	INIT_LIST_HEAD(&mapping_job->list_entry);
++	mutex_lock(&mdp_job_mapping_list_mutex);
++	if (job_mapping_idx == 0)
++		job_mapping_idx = 1;
++	mapping_job->id = job_mapping_idx;
++	user_job.job_id = job_mapping_idx;
++	job_mapping_idx++;
++	mapping_job->job = handle;
++	list_add_tail(&mapping_job->list_entry, &job_mapping_list);
++	mutex_unlock(&mdp_job_mapping_list_mutex);
++
++	if (copy_to_user((void *)param, &user_job, sizeof(user_job))) {
++		CMDQ_ERR("CMDQ_IOCTL_ASYNC_EXEC copy_to_user failed\n");
++		return -EFAULT;
++	}
++
++	return 0;
++}
++
++s32 mdp_ioctl_async_wait(unsigned long param)
++{
++	struct mdp_wait job_result;
++	struct cmdqRecStruct *handle = NULL;
++	/* backup value after task release */
++	s32 status, i;
++	u64 exec_cost = sched_clock();
++	struct mdp_job_mapping *mapping_job = NULL, *tmp = NULL;
++
++	if (copy_from_user(&job_result, (void *)param, sizeof(job_result))) {
++		CMDQ_ERR("copy_from_user job_result fail\n");
++		return -EFAULT;
++	}
++
++	/* verify job handle */
++	mutex_lock(&mdp_job_mapping_list_mutex);
++	list_for_each_entry_safe(mapping_job, tmp, &job_mapping_list,
++		list_entry) {
++		if (mapping_job->id == job_result.job_id) {
++			handle = mapping_job->job;
++			CMDQ_MSG("find handle:%p with id:%llx\n",
++				handle, job_result.job_id);
++			list_del(&mapping_job->list_entry);
++			break;
++		}
++	}
++	mutex_unlock(&mdp_job_mapping_list_mutex);
++
++	if (!handle) {
++		CMDQ_ERR("job not exists:0x%016llx\n", job_result.job_id);
++		return -EFAULT;
++	}
++
++	do {
++		/* wait for task done */
++		status = cmdq_mdp_wait(handle, NULL);
++		if (status < 0) {
++			CMDQ_ERR("wait task result failed:%d handle:0x%p\n",
++				status, handle);
++			break;
++		}
++
++		/* check read_v1 */
++		if (job_result.read_v1_result.count != handle->user_reg_count) {
++			CMDQ_ERR("handle:0x%p wrong register buffer %u < %u\n",
++				handle, job_result.read_v1_result.count,
++				handle->user_reg_count);
++			status = -ENOMEM;
++			break;
++		}
++
++		/* copy read result v1 to user space */
++		if (job_result.read_v1_result.ret_values && copy_to_user(
++			CMDQ_U32_PTR(job_result.read_v1_result.ret_values),
++			handle->reg_values,
++			handle->user_reg_count * sizeof(u32))) {
++			CMDQ_ERR("Copy REGVALUE to user space failed\n");
++			status = -EFAULT;
++			break;
++		}
++
++		/* copy read result to user space */
++		status = mdp_process_read_request(&job_result.read_result);
++	} while (0);
++	exec_cost = div_s64(sched_clock() - exec_cost, 1000);
++	if (exec_cost > 150000)
++		CMDQ_LOG("[warn]job wait and close cost:%lluus handle:0x%p\n",
++			exec_cost, handle);
++
++	for (i = 0; i < mapping_job->handle_count; i++)
++		mdp_ion_free_handle(mapping_job->handles[i]);
++
++	kfree(mapping_job);
++	CMDQ_SYSTRACE_BEGIN("%s destroy\n", __func__);
++	/* task now can release */
++	cmdq_task_destroy(handle);
++	CMDQ_SYSTRACE_END();
++
++	return status;
++}
++
++s32 mdp_ioctl_alloc_readback_slots(void *fp, unsigned long param)
++{
++	struct mdp_readback rb_req;
++	dma_addr_t paStart = 0;
++	s32 status;
++	u32 free_slot, free_slot_group, alloc_slot_index;
++
++	if (copy_from_user(&rb_req, (void *)param, sizeof(rb_req))) {
++		CMDQ_ERR("%s copy_from_user failed\n", __func__);
++		return -EFAULT;
++	}
++
++	if (rb_req.count > MAX_COUNT_IN_RB_SLOT) {
++		CMDQ_ERR("%s invalid count:%u\n", __func__, rb_req.count);
++		return -EINVAL;
++	}
++
++	status = cmdq_alloc_write_addr(rb_req.count, &paStart,
++		CMDQ_CLT_MDP, fp);
++	if (status != 0) {
++		CMDQ_ERR("%s alloc write address failed\n", __func__);
++		return status;
++	}
++
++	mutex_lock(&rb_slot_list_mutex);
++	free_slot_group = ffz(alloc_slot_group);
++	if (unlikely(alloc_slot_group == ~0UL)) {
++		CMDQ_ERR("%s no free slot:%#llx\n", __func__, alloc_slot_group);
++		cmdq_free_write_addr(paStart, CMDQ_CLT_MDP);
++		mutex_unlock(&rb_slot_list_mutex);
++		return -ENOMEM;
++	}
++	/* find slot id */
++	free_slot = ffz(alloc_slot[free_slot_group]);
++	if (unlikely(alloc_slot[free_slot_group] == ~0UL)) {
++		CMDQ_ERR("%s not found free slot in %u: %#llx\n", __func__,
++			free_slot_group, alloc_slot[free_slot_group]);
++		cmdq_free_write_addr(paStart, CMDQ_CLT_MDP);
++		mutex_unlock(&rb_slot_list_mutex);
++		return -EFAULT;
++	}
++	alloc_slot[free_slot_group] |= 1LL << free_slot;
++	if (alloc_slot[free_slot_group] == ~0UL)
++		alloc_slot_group |= 1LL << free_slot_group;
++
++	alloc_slot_index = free_slot + free_slot_group * 64;
++	rb_slot[alloc_slot_index].count = rb_req.count;
++	rb_slot[alloc_slot_index].pa_start = paStart;
++	rb_slot[alloc_slot_index].fp = fp;
++	CMDQ_MSG("%s get 0x%pa in %d, fp:%p\n", __func__,
++		&paStart, alloc_slot_index, fp);
++	CMDQ_MSG("%s alloc slot[%d] %#llx, %#llx\n", __func__, free_slot_group,
++		alloc_slot[free_slot_group], alloc_slot_group);
++	mutex_unlock(&rb_slot_list_mutex);
++
++	rb_req.start_id = alloc_slot_index << SLOT_ID_SHIFT;
++	CMDQ_MSG("%s get 0x%08x\n", __func__, rb_req.start_id);
++
++	if (copy_to_user((void *)param, &rb_req, sizeof(rb_req))) {
++		CMDQ_ERR("%s copy_to_user failed\n", __func__);
++		return -EFAULT;
++	}
++
++	return 0;
++}
++
++s32 mdp_ioctl_free_readback_slots(void *fp, unsigned long param)
++{
++	struct mdp_readback free_req;
++	u32 free_slot_index, free_slot_group, free_slot;
++	dma_addr_t paStart = 0;
++
++	CMDQ_MSG("%s\n", __func__);
++
++	if (copy_from_user(&free_req, (void *)param, sizeof(free_req))) {
++		CMDQ_ERR("%s copy_from_user failed\n", __func__);
++		return -EFAULT;
++	}
++
++	free_slot_index = free_req.start_id >> SLOT_ID_SHIFT;
++	if (unlikely(free_slot_index >= MAX_RB_SLOT_NUM)) {
++		CMDQ_ERR("%s wrong:%x, start:%x\n", __func__,
++			free_slot_index, free_req.start_id);
++		return -EINVAL;
++	}
++
++	mutex_lock(&rb_slot_list_mutex);
++	free_slot_group = free_slot_index >> 6;
++	free_slot = free_slot_index & 0x3f;
++	if (free_slot_group >= SLOT_GROUP_NUM) {
++		mutex_unlock(&rb_slot_list_mutex);
++		CMDQ_ERR("%s invalid group:%x\n", __func__, free_slot_group);
++		return -EINVAL;
++	}
++	if (!(alloc_slot[free_slot_group] & (1LL << free_slot))) {
++		mutex_unlock(&rb_slot_list_mutex);
++		CMDQ_ERR("%s %d not in group[%d]:%llx\n", __func__,
++			free_req.start_id, free_slot_group,
++			alloc_slot[free_slot_group]);
++		return -EINVAL;
++	}
++	if (rb_slot[free_slot_index].fp != fp) {
++		mutex_unlock(&rb_slot_list_mutex);
++		CMDQ_ERR("%s fp %p different:%p\n", __func__,
++			fp, rb_slot[free_slot_index].fp);
++		return -EINVAL;
++	}
++	alloc_slot[free_slot_group] &= ~(1LL << free_slot);
++	if (alloc_slot[free_slot_group] != ~0UL)
++		alloc_slot_group &= ~(1LL << free_slot_group);
++
++	paStart = rb_slot[free_slot_index].pa_start;
++	rb_slot[free_slot_index].count = 0;
++	rb_slot[free_slot_index].pa_start = 0;
++	CMDQ_MSG("%s free 0x%pa in %d, fp:%p\n", __func__,
++		&paStart, free_slot_index, rb_slot[free_slot_index].fp);
++	rb_slot[free_slot_index].fp = NULL;
++	CMDQ_MSG("%s alloc slot[%d] %#llx, %#llx\n", __func__, free_slot_group,
++		alloc_slot[free_slot_group], alloc_slot_group);
++	mutex_unlock(&rb_slot_list_mutex);
++
++	return cmdq_free_write_addr(paStart, CMDQ_CLT_MDP);
++}
++
++s32 mdp_ioctl_read_readback_slots(unsigned long param)
++{
++	struct mdp_read_readback read_req;
++
++	CMDQ_MSG("%s\n", __func__);
++	if (copy_from_user(&read_req, (void *)param, sizeof(read_req))) {
++		CMDQ_ERR("%s copy_from_user failed\n", __func__);
++		return -EFAULT;
++	}
++
++	return mdp_process_read_request(&read_req);
++}
++
++#ifdef MDP_COMMAND_SIMULATE
++s32 mdp_ioctl_simulate(unsigned long param)
++{
++#ifdef MDP_META_IN_LEGACY_V2
++	CMDQ_LOG("%s not support\n", __func__);
++	return -EFAULT;
++#else
++	struct mdp_simulate user_job;
++	struct mdp_submit submit = {0};
++	struct mdp_job_mapping *mapping_job = NULL;
++	struct cmdq_command_buffer cmd_buf = {0};
++	struct cmdqRecStruct *handle = NULL;
++	struct cmdq_pkt_buffer *buf;
++	u8 *result_buffer = NULL, exec_cost;
++	s32 status = 0;
++	u32 size, result_size = 0;
++
++	if (copy_from_user(&user_job, (void *)param, sizeof(user_job))) {
++		CMDQ_ERR("%s copy mdp_simulate from user fail\n", __func__);
++		status = -EFAULT;
++		goto done;
++	}
++
++	submit.metas = user_job.metas;
++	submit.meta_count = user_job.meta_count;
++
++	mapping_job = kzalloc(sizeof(*mapping_job), GFP_KERNEL);
++	if (!mapping_job) {
++		status = -ENOMEM;
++		goto done;
++	}
++
++	result_buffer = vzalloc(user_job.command_size);
++	if (!result_buffer) {
++		CMDQ_ERR("%s unable to alloc necessary cmd buffer\n", __func__);
++		status = -ENOMEM;
++		goto done;
++	}
++
++	cmd_buf.va_base = kmalloc(PAGE_SIZE, GFP_KERNEL);
++	if (!cmd_buf.va_base) {
++		CMDQ_ERR("%s allocate cmd_buf fail!\n", __func__);
++		status = -ENOMEM;
++		goto done;
++	}
++	cmd_buf.avail_buf_size = PAGE_SIZE;
++
++	status = cmdq_mdp_handle_create(&handle);
++	if (status < 0)
++		goto done;
++
++	/* Make command from user job */
++	exec_cost = sched_clock();
++	status = translate_user_job(&submit, mapping_job, handle, &cmd_buf);
++	if (cmdq_handle_flush_cmd_buf(handle, &cmd_buf)) {
++		CMDQ_ERR("%s do flush final cmd fail\n", __func__);
++		status = -EFAULT;
++		goto done;
++	}
++	exec_cost = div_s64(sched_clock() - exec_cost, 1000);
++	CMDQ_LOG("simulate translate job[%d] cost:%lluus\n",
++		user_job.meta_count, exec_cost);
++
++	list_for_each_entry(buf, &handle->pkt->buf, list_entry) {
++		if (list_is_last(&buf->list_entry, &handle->pkt->buf))
++			size = CMDQ_CMD_BUFFER_SIZE -
++				handle->pkt->avail_buf_size;
++		else
++			/* CMDQ_INST_SIZE for skip jump */
++			size = CMDQ_CMD_BUFFER_SIZE - CMDQ_INST_SIZE;
++
++		if (result_size + size > user_job.command_size)
++			size = user_job.command_size - result_size;
++
++		memcpy(result_buffer + result_size, buf->va_base, size);
++		result_size += size;
++		if (result_size >= user_job.command_size) {
++			CMDQ_ERR("instruction buf size not enough %u < %u\n",
++				result_size, handle->pkt->cmd_buf_size);
++			break;
++		}
++	}
++	CMDQ_LOG("simulate instruction size:%u\n", result_size);
++
++	if (copy_to_user((void *)(unsigned long)user_job.commands,
++		result_buffer, result_size)) {
++		CMDQ_ERR("%s fail to copy instructions to user\n", __func__);
++		status = -EINVAL;
++		goto done;
++	}
++
++	if (copy_to_user((void *)(unsigned long)user_job.result_size,
++		&result_size, sizeof(u32))) {
++		CMDQ_ERR("%s fail to copy result size to user\n", __func__);
++		status = -EINVAL;
++		goto done;
++	}
++
++	CMDQ_LOG("%s done\n", __func__);
++
++done:
++	kfree(mapping_job);
++	kfree(cmd_buf.va_base);
++	vfree(result_buffer);
++	if (handle)
++		cmdq_task_destroy(handle);
++	return status;
++#endif
++}
++#endif
++
++void mdp_ioctl_free_readback_slots_by_node(void *fp)
++{
++	u32 i, free_slot_group, free_slot;
++	dma_addr_t paStart = 0;
++
++	CMDQ_MSG("%s, node:%p\n", __func__, fp);
++
++	mutex_lock(&rb_slot_list_mutex);
++	for (i = 0; i < ARRAY_SIZE(rb_slot); i++) {
++		if (rb_slot[i].fp != fp)
++			continue;
++
++		free_slot_group = i >> 6;
++		free_slot = i & 0x3f;
++		alloc_slot[free_slot_group] &= ~(1LL << free_slot);
++		if (alloc_slot[free_slot_group] != ~0UL)
++			alloc_slot_group &= ~(1LL << free_slot_group);
++		paStart = rb_slot[i].pa_start;
++		rb_slot[i].count = 0;
++		rb_slot[i].pa_start = 0;
++		rb_slot[i].fp = NULL;
++		CMDQ_MSG("%s free 0x%pa in %d\n", __func__, &paStart, i);
++		CMDQ_MSG("%s alloc slot[%d] %#llx, %#llx\n", __func__,
++			free_slot_group,
++			alloc_slot[free_slot_group], alloc_slot_group);
++		cmdq_free_write_addr(paStart, CMDQ_CLT_MDP);
++	}
++	mutex_unlock(&rb_slot_list_mutex);
++}
++
++static long mdp_limit_ioctl(struct file *pf, unsigned int code,
++	unsigned long param)
++{
++	s32 status = 0;
++
++	CMDQ_VERBOSE("%s code:0x%08x f:0x%p\n", __func__, code, pf);
++
++	switch (code) {
++	case CMDQ_IOCTL_QUERY_USAGE:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_QUERY_USAGE\n");
++		status = cmdq_driver_ioctl_query_usage(pf, param);
++		break;
++	case CMDQ_IOCTL_QUERY_CAP_BITS:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_QUERY_CAP_BITS\n");
++		status = cmdq_driver_ioctl_query_cap_bits(param);
++		break;
++	case CMDQ_IOCTL_QUERY_DTS:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_QUERY_DTS\n");
++		status = cmdq_driver_ioctl_query_dts(param);
++		break;
++	case CMDQ_IOCTL_NOTIFY_ENGINE:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_NOTIFY_ENGINE\n");
++		status = cmdq_driver_ioctl_notify_engine(param);
++		break;
++	case CMDQ_IOCTL_ASYNC_EXEC:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_ASYNC_EXEC\n");
++		CMDQ_SYSTRACE_BEGIN("%s_async_exec\n", __func__);
++		status = mdp_ioctl_async_exec(pf, param);
++		CMDQ_SYSTRACE_END();
++		break;
++	case CMDQ_IOCTL_ASYNC_WAIT:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_ASYNC_WAIT\n");
++		CMDQ_SYSTRACE_BEGIN("%s_async_wait\n", __func__);
++		status = mdp_ioctl_async_wait(param);
++		CMDQ_SYSTRACE_END();
++		break;
++	case CMDQ_IOCTL_ALLOC_READBACK_SLOTS:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_ALLOC_READBACK_SLOTS\n");
++		status = mdp_ioctl_alloc_readback_slots(pf, param);
++		break;
++	case CMDQ_IOCTL_FREE_READBACK_SLOTS:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_FREE_READBACK_SLOTS\n");
++		status = mdp_ioctl_free_readback_slots(pf, param);
++		break;
++	case CMDQ_IOCTL_READ_READBACK_SLOTS:
++		CMDQ_MSG("ioctl CMDQ_IOCTL_READ_READBACK_SLOTS\n");
++		status = mdp_ioctl_read_readback_slots(param);
++		break;
++	default:
++		CMDQ_ERR("unrecognized ioctl 0x%08x\n", code);
++		return -ENOIOCTLCMD;
++	}
++
++	if (status < 0)
++		CMDQ_ERR("ioctl return fail:%d\n", status);
++
++	return status;
++}
++
++#ifdef CONFIG_COMPAT
++static long mdp_limit_ioctl_compat(struct file *pFile, unsigned int code,
++	unsigned long param)
++{
++	switch (code) {
++	case CMDQ_IOCTL_QUERY_USAGE:
++	case CMDQ_IOCTL_QUERY_CAP_BITS:
++	case CMDQ_IOCTL_QUERY_DTS:
++	case CMDQ_IOCTL_NOTIFY_ENGINE:
++	case CMDQ_IOCTL_ASYNC_EXEC:
++	case CMDQ_IOCTL_ASYNC_WAIT:
++	case CMDQ_IOCTL_ALLOC_READBACK_SLOTS:
++	case CMDQ_IOCTL_FREE_READBACK_SLOTS:
++	case CMDQ_IOCTL_READ_READBACK_SLOTS:
++		/* All ioctl structures should be the same size in
++		 * 32-bit and 64-bit linux.
++		 */
++		return mdp_limit_ioctl(pFile, code, param);
++	case CMDQ_IOCTL_LOCK_MUTEX:
++	case CMDQ_IOCTL_UNLOCK_MUTEX:
++		CMDQ_ERR("[COMPAT]deprecated ioctl 0x%08x\n", code);
++		return -ENOIOCTLCMD;
++	default:
++		CMDQ_ERR("[COMPAT]unrecognized ioctl 0x%08x\n", code);
++		return -ENOIOCTLCMD;
++	}
++
++	CMDQ_ERR("[COMPAT]unrecognized ioctl 0x%08x\n", code);
++	return -ENOIOCTLCMD;
++}
++#endif
++
++static const struct file_operations mdp_op_ex = {
++	.owner = THIS_MODULE,
++	.open = mdp_limit_open,
++	.release = mdp_limit_release,
++	.unlocked_ioctl = mdp_limit_ioctl,
++#ifdef CONFIG_COMPAT
++	.compat_ioctl = mdp_limit_ioctl_compat,
++#endif
++};
++
++static struct cdev *mdp_limit_cdev;
++#ifdef MDP_LIMIT_NODE
++static dev_t mdp_limit_dev_no;
++static struct class *mdp_limit_class;
++#endif
++
++int mdp_limit_late_init(void)
++{
++	mdp_ion_create("MDP");
++
++	return 0;
++}
++
++int mdp_limit_dev_create(struct platform_device *device)
++{
++	int status = 0;
++
++	mdp_limit_cdev = cdev_alloc();
++	mdp_limit_cdev->owner = THIS_MODULE;
++	mdp_limit_cdev->ops = &mdp_op_ex;
++
++#ifdef MDP_LIMIT_NODE
++	status = alloc_chrdev_region(&mdp_limit_dev_no, 0, 1,
++		MDP_LIMIT_DRIVER_DEVICE_NAME);
++	if (status != 0)
++		CMDQ_ERR("Get MDP device major number(%d) failed(%d)\n",
++			mdp_limit_dev_no, status);
++	else
++		CMDQ_MSG("Get MDP device major number(%d) success(%d)\n",
++			mdp_limit_dev_no, status);
++
++	status = cdev_add(mdp_limit_cdev, mdp_limit_dev_no, 1);
++
++	mdp_limit_class = class_create(THIS_MODULE,
++		MDP_LIMIT_DRIVER_DEVICE_NAME);
++	device_create(mdp_limit_class, NULL, mdp_limit_dev_no, NULL,
++		MDP_LIMIT_DRIVER_DEVICE_NAME);
++#endif
++	INIT_LIST_HEAD(&job_mapping_list);
++
++	CMDQ_LOG("MDP limit dev create end\n");
++
++	return status;
++}
++
++void mdp_limit_dev_destroy(void)
++{
++#ifdef MDP_LIMIT_NODE
++	device_destroy(mdp_limit_class, mdp_limit_dev_no);
++	class_destroy(mdp_limit_class);
++	unregister_chrdev_region(mdp_limit_dev_no, 1);
++#endif
++	cdev_del(mdp_limit_cdev);
++	mdp_limit_cdev = NULL;
++	mdp_ion_destroy();
++}
+diff --git a/drivers/misc/mediatek/mdp/mdp_ioctl_ex.h b/drivers/misc/mediatek/mdp/mdp_ioctl_ex.h
+new file mode 100644
+index 000000000..35721e997
+--- /dev/null
++++ b/drivers/misc/mediatek/mdp/mdp_ioctl_ex.h
+@@ -0,0 +1,49 @@
++/*
++ * Copyright (C) 2015 MediaTek Inc.
++ * Copyright (C) 2021 XiaoMi, Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef __MDP_IOCTL_EX_H__
++#define __MDP_IOCTL_EX_H__
++
++#include <linux/kernel.h>
++#include <linux/platform_device.h>
++
++int mdp_limit_late_init(void);
++int mdp_limit_dev_create(struct platform_device *device);
++void mdp_limit_dev_destroy(void);
++s32 mdp_ioctl_async_exec(struct file *pf, unsigned long param);
++s32 mdp_ioctl_async_wait(unsigned long param);
++s32 mdp_ioctl_alloc_readback_slots(void *fp, unsigned long param);
++s32 mdp_ioctl_free_readback_slots(void *fp, unsigned long param);
++s32 mdp_ioctl_read_readback_slots(unsigned long param);
++s32 mdp_ioctl_simulate(unsigned long param);
++void mdp_ioctl_free_readback_slots_by_node(void *fp);
++
++
++#if (IS_ENABLED(CONFIG_TRUSTONIC_TEE_SUPPORT) || \
++	IS_ENABLED(CONFIG_MICROTRUST_TEE_SUPPORT)) && \
++	IS_ENABLED(CONFIG_MTK_TEE_GP_SUPPORT)
++#if IS_ENABLED(CONFIG_MTK_SEC_VIDEO_PATH_SUPPORT) || \
++	IS_ENABLED(CONFIG_MTK_CAM_SECURITY_SUPPORT) || \
++	IS_ENABLED(CONFIG_MTK_GZ_SUPPORT_SDSP)
++#define MDP_M4U_TEE_SUPPORT
++int m4u_sec_init(void);
++#endif
++#endif
++
++#if IS_ENABLED(CONFIG_MTK_CAM_GENIEZONE_SUPPORT)
++#define MDP_M4U_MTEE_SUPPORT
++int m4u_gz_sec_init(int mtk_iommu_sec_id);
++#endif
++
++#endif				/* __MDP_IOCTL_EX_H__ */
+diff --git a/drivers/misc/mediatek/mdp/mdp_m4u.c b/drivers/misc/mediatek/mdp/mdp_m4u.c
+new file mode 100644
+index 000000000..2ed4dbc93
+--- /dev/null
++++ b/drivers/misc/mediatek/mdp/mdp_m4u.c
+@@ -0,0 +1,159 @@
++/*
++ * Copyright (C) 2015 MediaTek Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#include "mdp_m4u.h"
++#ifdef CONFIG_MTK_CMDQ_MBOX_EXT
++#include "mdp_cmdq_helper_ext.h"
++#else
++#include "cmdq_record.h"
++#ifndef MDP_META_IN_LEGACY_V2
++#include "cmdq_helper_ext.h"
++#else
++#include "cmdq_core.h"
++#endif
++#endif
++#include <ion_drv.h>
++#ifdef CONFIG_MTK_IOMMU_V2
++#include "mach/mt_iommu.h"
++#include "mach/pseudo_m4u.h"
++#include <soc/mediatek/smi.h>
++#include "mtk_iommu_ext.h"
++#endif
++
++#if defined(CONFIG_MTK_IOMMU_V2)
++static struct ion_client *g_mdp_ion_client;
++#endif
++
++int mdp_ion_get_mva(struct ion_handle *handle,
++	unsigned long *mva, unsigned long fixed_mva, int port)
++{
++#if defined(CONFIG_MTK_IOMMU_V2)
++	struct ion_mm_data mm_data;
++	size_t mva_size;
++
++	memset((void *)&mm_data, 0, sizeof(struct ion_mm_data));
++	mm_data.mm_cmd = ION_MM_GET_IOVA;
++	mm_data.get_phys_param.module_id = port;
++	mm_data.get_phys_param.kernel_handle = handle;
++	if (fixed_mva > 0) {
++		mm_data.get_phys_param.phy_addr =
++			(port << 24) | ION_FLAG_GET_FIXED_PHYS;
++		mm_data.get_phys_param.len = ION_FLAG_GET_FIXED_PHYS;
++		mm_data.get_phys_param.reserve_iova_start = fixed_mva;
++		mm_data.get_phys_param.reserve_iova_end = fixed_mva;
++	}
++
++	if (ion_kernel_ioctl(g_mdp_ion_client, ION_CMD_MULTIMEDIA,
++		(unsigned long)&mm_data) < 0) {
++		CMDQ_ERR("%s: get mva failed.%p -%p\n",
++			__func__, g_mdp_ion_client, handle);
++		ion_free(g_mdp_ion_client, handle);
++		return -1;
++	}
++
++	*mva = mm_data.get_phys_param.phy_addr;
++	mva_size = mm_data.get_phys_param.len;
++	if (*mva == 0)
++		CMDQ_ERR("alloc mmu addr hnd=0x%p,mva=0x%08lx\n",
++			handle, *mva);
++#endif
++	return 0;
++}
++
++struct ion_handle *mdp_ion_import_handle(int fd)
++{
++	struct ion_handle *handle = NULL;
++#if defined(CONFIG_MTK_IOMMU_V2)
++	/* If no need Ion support, do nothing! */
++	if (fd <= 0) {
++		CMDQ_ERR("NO NEED ion support, fd %d\n", fd);
++		return handle;
++	}
++
++	if (!g_mdp_ion_client) {
++		CMDQ_ERR("invalid ion client!\n");
++		return handle;
++	}
++
++	handle = ion_import_dma_buf_fd(g_mdp_ion_client, fd);
++	if (IS_ERR(handle)) {
++		CMDQ_ERR("import ion handle failed!\n");
++		return NULL;
++	}
++
++	CMDQ_MSG("import ion handle fd=%d,hnd=0x%p\n", fd, handle);
++#endif
++	return handle;
++}
++
++void mdp_ion_free_handle(struct ion_handle *handle)
++{
++#if defined(CONFIG_MTK_IOMMU_V2)
++	if (!g_mdp_ion_client) {
++		CMDQ_ERR("invalid ion client!\n");
++		return;
++	}
++	if (!handle)
++		return;
++
++	ion_free(g_mdp_ion_client, handle);
++
++	CMDQ_MSG("free ion handle 0x%p\n", handle);
++#endif
++}
++
++void mdp_ion_cache_flush(struct ion_handle *handle)
++{
++#if defined(CONFIG_MTK_IOMMU_V2)
++	struct ion_sys_data sys_data;
++	void *buffer_va;
++
++	if (!g_mdp_ion_client || !handle)
++		return;
++
++	sys_data.sys_cmd = ION_SYS_CACHE_SYNC;
++	sys_data.cache_sync_param.kernel_handle = handle;
++	sys_data.cache_sync_param.sync_type = ION_CACHE_INVALID_BY_RANGE;
++
++	buffer_va = ion_map_kernel(g_mdp_ion_client, handle);
++	sys_data.cache_sync_param.va = buffer_va;
++	sys_data.cache_sync_param.size = handle->buffer->size;
++
++	if (ion_kernel_ioctl(g_mdp_ion_client, ION_CMD_SYSTEM,
++		(unsigned long)&sys_data))
++		pr_info("ion cache flush failed!\n");
++	ion_unmap_kernel(g_mdp_ion_client, handle);
++#endif
++}
++
++void mdp_ion_create(const char *name)
++{
++#if defined(CONFIG_MTK_IOMMU_V2)
++	if (g_ion_device)
++		g_mdp_ion_client = ion_client_create(g_ion_device, name);
++	else
++		CMDQ_ERR("invalid g_ion_device\n");
++
++	if (!g_mdp_ion_client)
++		CMDQ_ERR("create ion client failed!\n");
++
++#endif
++}
++
++void mdp_ion_destroy(void)
++{
++#if defined(CONFIG_MTK_IOMMU_V2)
++	if (g_mdp_ion_client && g_ion_device)
++		ion_client_destroy(g_mdp_ion_client);
++#endif
++}
+diff --git a/drivers/misc/mediatek/mdp/mdp_m4u.h b/drivers/misc/mediatek/mdp/mdp_m4u.h
+new file mode 100644
+index 000000000..a0c339673
+--- /dev/null
++++ b/drivers/misc/mediatek/mdp/mdp_m4u.h
+@@ -0,0 +1,31 @@
++/*
++ * Copyright (C) 2015 MediaTek Inc.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
++ * GNU General Public License for more details.
++ */
++
++#ifndef __MDP_M4U_H__
++#define __MDP_M4U_H__
++
++#ifdef CONFIG_MTK_IOMMU_V2
++#include "mach/mt_iommu.h"
++#include <soc/mediatek/smi.h>
++#endif
++#include <ion_priv.h>
++
++void mdp_ion_create(const char *name);
++void mdp_ion_destroy(void);
++int mdp_ion_get_mva(struct ion_handle *handle,
++	unsigned long *mva, unsigned long fixed_mva, int port);
++struct ion_handle *mdp_ion_import_handle(int fd);
++void mdp_ion_free_handle(struct ion_handle *handle);
++void mdp_ion_cache_flush(struct ion_handle *handle);
++
++#endif
