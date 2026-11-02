@@ -1,0 +1,151 @@
+diff --git a/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/os/linux/gl_wext_priv.c b/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/os/linux/gl_wext_priv.c
+--- a/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/os/linux/gl_wext_priv.c
++++ b/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/os/linux/gl_wext_priv.c
+@@ -164,6 +164,7 @@
+ #define CMD_WLS_BATCHING	"WLS_BATCHING"
+ 
+ #define CMD_SETMONITOR		"MONITOR"
++#define CMD_INJECT		"INJECT"
+ #define CMD_SETBUFMODE		"BUFFER_MODE"
+ 
+ #define CMD_GET_CH_RANK_LIST	"GET_CH_RANK_LIST"
+@@ -11493,6 +11494,131 @@
+ }
+ 
+ #if CFG_SUPPORT_SNIFFER
++/*
++ * priv_driver_inject_frame: MONITOR ile acilan dinleme arayuzunden
++ * bagimsiz olarak, zaten tamamlanmis (baslik dahil) bir ham 802.11
++ * cercevesini STA_REC_INDEX_BMCAST (iliskisiz/yayin tipi, no-ack)
++ * yoluyla donanima gonderir.
++ *
++ * Kullanim:  INJECT <onaltilik cerceve baytlari>
++ *   ornek (26 baytlik deauth, reason=7):
++ *     INJECT c00000003a37aabbccddeeff001122334455aabbccddeeff00000700
++ *
++ * Donanimin/firmware'in, su an iliskili olunmayan bir hedefe giden
++ * cerceveleri kabul edip etmeyecegi onceden bilinmiyor; bu komutun
++ * basarili donmesi cercevenin firmware'e teslim edildigini gosterir,
++ * havaya gercekten cikip cikmadigini degil.
++ */
++#define WLAN_INJECT_MAX_FRAME_LEN	200
++
++static int32_t privDriverInjectHexVal(IN uint8_t ucChar)
++{
++	if (ucChar >= '0' && ucChar <= '9')
++		return ucChar - '0';
++	if (ucChar >= 'a' && ucChar <= 'f')
++		return ucChar - 'a' + 10;
++	if (ucChar >= 'A' && ucChar <= 'F')
++		return ucChar - 'A' + 10;
++	return -1;
++}
++
++static int priv_driver_inject_frame(IN struct net_device *prNetDev,
++				     IN char *pcCommand, IN int i4TotalLen)
++{
++	struct GLUE_INFO *prGlueInfo = NULL;
++	struct ADAPTER *prAdapter = NULL;
++	struct MSDU_INFO *prMsduInfo = NULL;
++	uint8_t ucBssIndex = AIS_DEFAULT_INDEX;
++	int32_t i4Argc = 0;
++	int8_t *apcArgv[WLAN_CFG_ARGV_MAX] = {0};
++	uint8_t *pucHex = NULL;
++	uint8_t aucFrame[WLAN_INJECT_MAX_FRAME_LEN];
++	uint32_t u4HexLen = 0, u4FrameLen = 0, i = 0;
++	uint8_t ucFC0 = 0, ucFC1 = 0, ucMacHeaderLen = 24;
++	int32_t i4BytesWritten = 0;
++
++	ASSERT(prNetDev);
++	if (GLUE_CHK_PR2(prNetDev, pcCommand) == FALSE)
++		return -1;
++	prGlueInfo = *((struct GLUE_INFO **) netdev_priv(prNetDev));
++	prAdapter = prGlueInfo->prAdapter;
++	ucBssIndex = wlanGetBssIdx(prNetDev);
++
++	wlanCfgParseArgument(pcCommand, &i4Argc, apcArgv);
++	if (i4Argc < 2) {
++		i4BytesWritten = snprintf(pcCommand, i4TotalLen,
++			"INJECT usage: INJECT <hex frame bytes>");
++		return i4BytesWritten;
++	}
++
++	pucHex = (uint8_t *) apcArgv[1];
++	u4HexLen = kalStrLen((char *) pucHex);
++	if (u4HexLen == 0 || (u4HexLen & 1) ||
++	    (u4HexLen / 2) < 24 ||
++	    (u4HexLen / 2) > WLAN_INJECT_MAX_FRAME_LEN) {
++		i4BytesWritten = snprintf(pcCommand, i4TotalLen,
++			"INJECT: invalid length (%u hex chars, need even, 48..%u)",
++			(unsigned int) u4HexLen,
++			WLAN_INJECT_MAX_FRAME_LEN * 2);
++		return i4BytesWritten;
++	}
++	u4FrameLen = u4HexLen / 2;
++
++	for (i = 0; i < u4FrameLen; i++) {
++		int32_t i4Hi = privDriverInjectHexVal(pucHex[2 * i]);
++		int32_t i4Lo = privDriverInjectHexVal(pucHex[2 * i + 1]);
++
++		if (i4Hi < 0 || i4Lo < 0) {
++			i4BytesWritten = snprintf(pcCommand, i4TotalLen,
++				"INJECT: bad hex digit at offset %u",
++				(unsigned int) (2 * i));
++			return i4BytesWritten;
++		}
++		aucFrame[i] = (uint8_t) ((i4Hi << 4) | i4Lo);
++	}
++
++	/*
++	 * 802.11 baslik uzunlugunu Frame Control alanindan hesapla:
++	 * taban 24 bayt; ToDS+FromDS ikisi de 1 ise 4-adresli (+6 bayt);
++	 * Data tipi ve QoS alt tipiyse (+2 bayt).
++	 */
++	ucFC0 = aucFrame[0];
++	ucFC1 = aucFrame[1];
++	if ((ucFC1 & 0x03) == 0x03)
++		ucMacHeaderLen += 6;
++	if (((ucFC0 >> 2) & 0x3) == 2 && (ucFC0 & 0x80))
++		ucMacHeaderLen += 2;
++	if (ucMacHeaderLen > u4FrameLen) {
++		i4BytesWritten = snprintf(pcCommand, i4TotalLen,
++			"INJECT: frame shorter than computed header (%u < %u)",
++			(unsigned int) u4FrameLen,
++			(unsigned int) ucMacHeaderLen);
++		return i4BytesWritten;
++	}
++
++	prMsduInfo = cnmMgtPktAlloc(prAdapter, (uint16_t) u4FrameLen);
++	if (prMsduInfo == NULL) {
++		i4BytesWritten = snprintf(pcCommand, i4TotalLen,
++			"INJECT: no free MSDU_INFO");
++		return i4BytesWritten;
++	}
++
++	kalMemCopy(prMsduInfo->prPacket, aucFrame, u4FrameLen);
++
++	TX_SET_MMPDU(prAdapter, prMsduInfo, ucBssIndex, STA_REC_INDEX_BMCAST,
++		     ucMacHeaderLen, (uint16_t) u4FrameLen,
++		     NULL, MSDU_RATE_MODE_AUTO);
++
++	nicTxEnqueueMsdu(prAdapter, prMsduInfo);
++
++	i4BytesWritten = snprintf(pcCommand, i4TotalLen,
++		"INJECT: queued %u bytes (hdr=%u) on bss %u via BMCAST",
++		(unsigned int) u4FrameLen,
++		(unsigned int) ucMacHeaderLen,
++		(unsigned int) ucBssIndex);
++	return i4BytesWritten;
++}
++
+ int priv_driver_set_monitor(IN struct net_device *prNetDev, IN char *pcCommand,
+ 			    IN int i4TotalLen)
+ {
+@@ -13241,6 +13367,7 @@
+ #if CFG_SUPPORT_SNIFFER
+ 	{CMD_SETMONITOR, priv_driver_set_monitor},
+ #endif
++	{CMD_INJECT, priv_driver_inject_frame},
+ 	{CMD_GET_QUE_INFO, priv_driver_get_que_info},
+ 	{CMD_GET_MEM_INFO, priv_driver_get_mem_info},
+ 	{CMD_GET_HIF_INFO, priv_driver_get_hif_info},
