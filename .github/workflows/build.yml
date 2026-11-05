@@ -63,7 +63,7 @@ jobs:
           shopt -s nullglob
           patches=(ci/patches/*.patch)
           echo "Bulunan yama sayisi: ${#patches[@]}"
-          [ "${#patches[@]}" -ge 4 ] || { echo "::error::Beklenen 4 yama (0001, 0002, 0003, 0004) yok"; exit 1; }
+          [ "${#patches[@]}" -ge 5 ] || { echo "::error::Beklenen 5 yama (0001, 0002, 0003, 0004, 0005) yok"; exit 1; }
           for p in "${patches[@]}"; do
             echo "== $p"
             git apply --check "$p"
@@ -78,7 +78,8 @@ jobs:
           test -f drivers/misc/mediatek/mdp/mdp_ioctl_ex.c || { echo "::error::0002 uygulanmadi"; exit 1; }
           WP=drivers/misc/mediatek/connectivity/wlan_drv_gen4m/os/linux/gl_wext_priv.c
           grep -q 'CMD_INJECT' "$WP"                  || { echo "::error::0004 uygulanmadi"; exit 1; }
-          echo "Yamalar dogrulandi: 0001 (pvPacket), 0002 (CMDQ ASYNC_EXEC/MDP), 0003 (RSSI), 0004 (INJECT)"
+          grep -q 'wlanInjectTxDoneHandler' "$WP"      || { echo "::error::0005 uygulanmadi"; exit 1; }
+          echo "Yamalar dogrulandi: 0001 (pvPacket), 0002 (CMDQ ASYNC_EXEC/MDP), 0003 (RSSI), 0004 (INJECT), 0005 (INJECT tx-done log)"
 
       - name: Install dependencies
         shell: bash

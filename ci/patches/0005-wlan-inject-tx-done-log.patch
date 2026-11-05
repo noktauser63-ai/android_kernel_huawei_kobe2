@@ -1,0 +1,38 @@
+diff --git a/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/os/linux/gl_wext_priv.c b/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/os/linux/gl_wext_priv.c
+--- a/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/os/linux/gl_wext_priv.c
++++ b/drivers/misc/mediatek/connectivity/wlan_drv_gen4m/os/linux/gl_wext_priv.c
+@@ -11522,6 +11522,25 @@
+ 	return -1;
+ }
+ 
++/*
++ * wlanInjectTxDoneHandler: INJECT ile gonderilen cercevenin gercek
++ * donanim/firmware tamamlanma durumunu loglar. nicTxProcessTxDoneEvent()
++ * basarili (ucStatus==0) tamamlanmayi yalnizca TRACE seviyesinde
++ * (normalde goruolmez) kaydeder; biz burada hem basari hem hata
++ * durumunu REQ/INFO seviyesinde, yani normal dmesg'te goruolur
++ * sekilde yazdiriyoruz. Sadece gozlem amacli, gonderimi etkilemez.
++ */
++static uint32_t wlanInjectTxDoneHandler(IN struct ADAPTER *prAdapter,
++					 IN struct MSDU_INFO *prMsduInfo,
++					 IN enum ENUM_TX_RESULT_CODE
++					 rTxDoneStatus)
++{
++	DBGLOG(REQ, INFO,
++	       "INJECT tx-done: status=%u (0=basarili, 0 disi=hata/kod)\n",
++	       (unsigned int) rTxDoneStatus);
++	return 0;
++}
++
+ static int priv_driver_inject_frame(IN struct net_device *prNetDev,
+ 				     IN char *pcCommand, IN int i4TotalLen)
+ {
+@@ -11607,7 +11626,7 @@
+ 
+ 	TX_SET_MMPDU(prAdapter, prMsduInfo, ucBssIndex, STA_REC_INDEX_BMCAST,
+ 		     ucMacHeaderLen, (uint16_t) u4FrameLen,
+-		     NULL, MSDU_RATE_MODE_AUTO);
++		     wlanInjectTxDoneHandler, MSDU_RATE_MODE_AUTO);
+ 
+ 	nicTxEnqueueMsdu(prAdapter, prMsduInfo);
+ 
